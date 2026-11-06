@@ -123,6 +123,41 @@ export class SharedBossPool {
   }
 }
 
+/** Aggregate view over independent Endless boss pools. Units take damage from the pool keyed to their leader; Match
+ * victory checks and the legacy team bar read the sum. */
+export class SharedBossPoolGroup {
+  constructor(pools, { onHit = null } = {}) {
+    this.pools = new Map(Object.entries(pools || {}));
+    this.byPlayer = new Map();
+    this.onHit = onHit;
+  }
+
+  get hp() { let n = 0; for (const pool of this.pools.values()) n += Math.max(0, Number(pool.hp) || 0); return n; }
+  get maxHp() { let n = 0; for (const pool of this.pools.values()) n += Math.max(0, Number(pool.maxHp) || 0); return n; }
+  get cum() { return Math.max(0, this.maxHp - this.hp); }
+
+  bossStatuses() {
+    return [...this.pools.entries()].map(([id, pool]) => ({ id, hp: Math.max(0, pool.hp), max: pool.maxHp }));
+  }
+
+  noteHit(playerId, amount) {
+    if (playerId != null) this.byPlayer.set(playerId, (this.byPlayer.get(playerId) || 0) + amount);
+    try { this.onHit?.(playerId, amount); } catch { /* one ticker callback cannot break pool damage */ }
+  }
+
+  damage(playerId, amount) {
+    let left = Number(amount);
+    if (!Number.isFinite(left) || left <= 0) return 0;
+    const before = this.hp;
+    for (const pool of this.pools.values()) {
+      if (left <= 0) break;
+      const dealt = pool.damage(playerId, left);
+      left -= dealt;
+    }
+    return before - this.hp;
+  }
+}
+
 /**
  * Hidden-core eligibility.
  * @param {import('./gamedata.js').GameData} gd

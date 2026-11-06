@@ -105,6 +105,7 @@ export class MatchViews {
       combatMode: this.clientCombat ? 'client' : 'server',
       // solo pause (g.pause, DESIGN §14): the battle, its field clock and every deadline are frozen while true
       paused: !!this.paused,
+      ...(this.endless ? { runKind: 'endless', endless: this.endlessPublic() } : {}),
       players: this.order.map((ps) => ({
         playerId: ps.playerId,
         seat: ps.seat,
@@ -146,7 +147,8 @@ export class MatchViews {
     if (this.teamLp != null) v.teamLp = Math.max(0, Math.round(this.teamLp));
     // 最终攻势 / 隐秘核心: when the overtime drain starts (ms epoch; `deadline` is the level's 120 s countdown)
     if ((this.phase === PHASE.FINAL_ASSAULT || this.phase === PHASE.HIDDEN_CORE) && this.overtimeAt) v.overtimeAt = this.overtimeAt;
-    if (this.bossPool) v.bossHp = { hp: Math.max(0, Math.round(this.bossPool.hp)), max: Math.round(this.bossPool.maxHp) };
+    if (this.bossPool) v.bossHp = { hp: Math.max(0, Math.round(this.bossPool.hp)), max: Math.round(this.bossPool.maxHp),
+      ...(typeof this.bossPool.bossStatuses === 'function' ? { bosses: this.bossPool.bossStatuses() } : {}) };
     if (this.phase === PHASE.BAND_DRAFT && this.draft) {
       const d = this.draft;
       // turnSeconds: the length of a turn (the countdown gauge's total; 0 when untimed) — deadline = turnDeadline
@@ -157,13 +159,25 @@ export class MatchViews {
     }
     if (this.phase === PHASE.SP_DRAFT && this.sp) {
       const s = this.sp;
+      const turn = this.spTurn();
+      const groupId = s.groupByPlayer?.[turn];
+      const group = groupId ? s.groups.find((g) => g.id === groupId) : null;
       v.sp = {
         family: s.family, name: s.name, desc: s.desc, eventId: s.eventId,
-        cards: s.cards.map(c => ({ ...cardView(c), soldOut: c.kind === 'item' && !this.itemPool.canGain(c.id) })), order: s.order.slice(),
-        turn: this.spTurn(), picks: { ...s.picks }, taken: { ...s.taken }, untimed: !!s.untimed,
+        cards: s.cards.map(c => ({ ...cardView(c), soldOut: !group && c.kind === 'item' && !this.itemPool.canGain(c.id) })), order: s.order.slice(),
+        turn, picks: { ...s.picks }, taken: { ...(group ? s.groupTaken[groupId] : s.taken) }, untimed: !!s.untimed,
+        ...(group ? { grouped: true, groupIndex: s.groups.indexOf(group) + 1, groupCount: s.groups.length, groupSize: group.members.length } : {}),
       };
     }
-    if (this.phase === PHASE.UNITE && this.unitePlan) v.unite = { helpers: this.unitePlan.helpers.map((p) => p.playerId), leakers: this.unitePlan.leakers.map((p) => p.playerId) };
+    if (this.phase === PHASE.UNITE && this.unitePlan) {
+      v.unite = {
+        helpers: this.unitePlan.helpers.map((p) => p.playerId),
+        leakers: this.unitePlan.leakers.map((p) => p.playerId),
+        ...(this.customRoom && this.order.length > 4 && Array.isArray(this.unitePlan.groups) ? {
+          groups: this.unitePlan.groups.map((group) => ({ id: group.id, helpers: group.helpers.map((p) => p.playerId) })),
+        } : {}),
+      };
+    }
     // SETTLE after a 联防: its outcome as data (settle.js uniteResultView; GitHub #235, PR #112) — { through, helpers,
     // leakers, losses: { playerId: the LP settlement charged this round } } — the client's result box reads the viewer's
     // own charge from it; absent when no 联防 resolved (the client then shows the round's own battle result)

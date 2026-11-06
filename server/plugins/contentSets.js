@@ -182,6 +182,7 @@ export function createContentSets({ registry, vanillaData, log = noopLog, maxSet
         ? { code: 'override', params: { path: `data:${w.path}`, plugins: Array.isArray(w.plugins) ? w.plugins : [] } }
         : { code: String(w?.code || 'warning'), params: { ...(w || {}) } })),
       served, dataBytes,
+      ...(built.dataOnly ? { dataOnly: true } : {}),
       ...(built.scripts?.length ? {execution:built.execution, scripts:built.scripts} : {}),
       ...(built.rules ? { rules: built.rules } : {}),
       // the official-bounds snapshot (DESIGN §32.5) its match host installs — the one its pages install too

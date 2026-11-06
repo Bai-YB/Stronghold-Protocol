@@ -51,6 +51,8 @@ export function wireOptions(opts) {
   for (const k of ['roomCode', 'mode', 'difficulty', 'modeId', 'aiPicksLast', 'soloUnlimited', 'seats', 'spectators', 'seed', 'matchNo', 'cs', 'vs', 'requireCs', 'kitted', 'version']) {
     if (opts[k] !== undefined) out[k] = opts[k];
   }
+  if (opts.untimedChoices === true) out.untimedChoices = true;
+  if (opts.customRoom === true) out.customRoom = true;
   // A test room must arrive as a test match. Forwarding these only when the flag is set keeps every other
   // worker payload identical. Dropping the flag fails closed: the worker match refuses g.test.
   if (opts.test === true) {

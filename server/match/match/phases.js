@@ -5,7 +5,8 @@
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { PHASE, ERR } from '../../../shared/constants.js';
-import { buildNormalWave, buildBossWave } from '../waves.js';
+import { buildNormalWave, buildBossWave, buildEndlessWave, buildEndlessBossWave } from '../waves.js';
+import { endlessAffix, isEndlessBoss, isEndlessDoubleBoss } from '../endless.js';
 import { pairPlayers, bossPairSalt } from '../finalAssault.js';
 import { createRng, deriveSeed } from '../../sim/rng.js';
 import { OK, fail, DELAYS, BAND_TURN_SECONDS } from './common.js';
@@ -49,7 +50,7 @@ export class MatchPhases {
     if (!this.isSolo) this.rngDraft.shuffle(order);
     order = this.humansFirst(order);
     const skips = this.isSolo ? 0 : this.gd.bandDraft.skipsPerPlayer;
-    const untimed = this.soloUntimed;
+    const untimed = this.soloUntimed || this.untimedChoices;
     this.draft = {
       order, idx: 0, picks: {}, skipsLeft: Object.fromEntries(order.map((pid) => [pid, skips])), untimed, turnDeadline: 0,
       /** playerId → the strategy highlighted in the draft screen (g.bandFocus) */
@@ -284,6 +285,13 @@ export class MatchPhases {
   _startRoundAfterOffers(r) {
     this.phase = PHASE.ROUND_START;
     this.round = r;
+    if (this.endlessActive()) {
+      this.endless.round = Math.max(1, r - this.gd.lastRound);
+      this.endless.affix = endlessAffix(this.endless.round);
+      this.endless.plannedBossRound = 0;
+      this.endless.plannedBossIds = null;
+      this.endless.boss = isEndlessBoss(this.endless.round) ? { round: this.endless.round, double: isEndlessDoubleBoss(this.endless.round), defeated: false } : null;
+    }
     this.fields = [];
     this.watchers.clear();
     this.unitePlan = null;
@@ -297,11 +305,14 @@ export class MatchPhases {
     // round start: its recompute() checks the board on the field the player deploys on this round (deployFieldOf reads
     // the boss pairing), so R14 → R15 never re-checks a boss-field board against the normal field (user playtest #5
     // item 7). rngWaves is used only here, so the order leaves every random stream unchanged.
-    const isBoss = r === this.gd.bossRound || r === this.gd.hiddenRound;
+    const endlessRound = this.endlessActive() ? this.endless.round : 0;
+    const isBoss = endlessRound ? isEndlessBoss(endlessRound) : (r === this.gd.bossRound || r === this.gd.hiddenRound);
     if (isBoss) {
       this._planBossWaves();
     } else {
-      this.wave = buildNormalWave(this.gd, this.rngWaves, this.factions, r);
+      this.wave = endlessRound
+        ? buildEndlessWave(this.gd, this.rngEndless, this.factions, endlessRound, this.endless.seats)
+        : buildNormalWave(this.gd, this.rngWaves, this.factions, r);
     }
     for (const ps of alive) ps.startRound(r);
     for (const ps of alive) this.dispatch(ps, 'onRoundStart', { round: r });
@@ -321,8 +332,14 @@ export class MatchPhases {
   /** The round's pairs and their templates, generated before the prep preview / board validation. */
   _planBossWaves() {
     const r = this.round;
-    const hidden = r === this.gd.hiddenRound && r !== this.gd.bossRound;
-    const bossId = hidden ? this.hiddenBossId : this.bossId;
+    const endlessRound = this.endlessActive() ? this.endless.round : 0;
+    const hidden = !endlessRound && r === this.gd.hiddenRound && r !== this.gd.bossRound;
+    const ids = endlessRound
+      ? (this.endless.plannedBossRound === endlessRound && Array.isArray(this.endless.plannedBossIds)
+        ? this.endless.plannedBossIds.slice() : this.endlessBossIds())
+      : [hidden ? this.hiddenBossId : this.bossId];
+    const bossId = ids[0] || this.bossId;
+    if (endlessRound) this.bossId = bossId;
     // Pairing uses an independent seeded draw, consuming no shop, wave, draft or battle randomness. The Hidden Core
     // draws its pairs and sides anew (GitHub #845: the official R15 of BV1VCXyBjEN1 p1 pairs 1-2 / 3-4 after an R14 of
     // 1-4 / 2-3; DESIGN §35.27, superseding §30.12's kept partners) from a stream of its own, so the Final Assault's
@@ -333,9 +350,17 @@ export class MatchPhases {
     const groups = pairPlayers(this.alivePlayers(), createRng(deriveSeed(this.seed, bossPairSalt(this.gd, r))), fresh ? null : this.bossPairs);
     this.bossPairs = groups.map(g => g.map(p => p.playerId));
     this.bossPairsRound = r;
+    if (this.endlessActive()) {
+      this.endless.plannedBossRound = endlessRound;
+      this.endless.plannedBossIds = ids.slice();
+      this.endless.boss = { round: endlessRound, double: ids.length > 1, bosses: ids.slice(), defeated: false };
+    }
     this.bossWaves = groups.map((g) => ({
       players: g.map((p) => p.playerId),
-      wave: buildBossWave(this.gd, this.rngWaves, this.factions, r, { bossId, solo: this.isSolo || g.length === 1 }),
+      wave: this.endlessActive()
+        ? buildEndlessBossWave(this.gd, this.rngEndless, this.factions, endlessRound,
+          { bossIds: ids, solo: this.isSolo || g.length === 1, players: this.endless.seats })
+        : buildBossWave(this.gd, this.rngWaves, this.factions, r, { bossId, solo: this.isSolo || g.length === 1 }),
     }));
   }
 

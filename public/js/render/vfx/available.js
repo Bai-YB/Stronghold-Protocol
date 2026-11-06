@@ -10,6 +10,9 @@ let listPromise = null;
 /** The file list (null when absent or unreadable). */
 export function loadFxList(fetchFn = globalThis.fetch) {
   if (!listPromise) {
+    // A miss is not cached: an early call that lands while the page is still settling (or a fetch aborted by a
+    // navigation) must not leave the effects layer without a file list for the rest of the session — the next call
+    // tries again, so 官方特效 recovers without a reload.
     listPromise = (async () => {
       if (typeof fetchFn !== 'function') return null;
       try {
@@ -18,7 +21,10 @@ export function loadFxList(fetchFn = globalThis.fetch) {
         const j = await res.json();
         return j && typeof j === 'object' ? j : null;
       } catch { return null; }
-    })();
+    })().then((list) => {
+      if (!list) listPromise = null;
+      return list;
+    }, () => { listPromise = null; return null; });
   }
   return listPromise;
 }

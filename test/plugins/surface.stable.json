@@ -148,6 +148,10 @@
     "anchor": "shared/plugins/manifest.js#MANIFEST_FIELDS"
   },
   {
+    "name": "manifest.field.room",
+    "anchor": "shared/plugins/manifest.js#MANIFEST_FIELDS"
+  },
+  {
     "name": "manifest.field.rules",
     "anchor": "shared/plugins/manifest.js#MANIFEST_FIELDS"
   },
@@ -1941,6 +1945,22 @@
   },
   {
     "name": "overlay.fx.bind",
+    "anchor": "public/js/render/vfx/pluginFormat.js#pluginFxProblems"
+  },
+  {
+    "name": "overlay.fx.bindOperators",
+    "anchor": "public/js/render/vfx/pluginFormat.js#pluginFxProblems"
+  },
+  {
+    "name": "overlay.fx.bindSkins",
+    "anchor": "public/js/render/vfx/pluginFormat.js#pluginFxProblems"
+  },
+  {
+    "name": "overlay.fx.bindEnemies",
+    "anchor": "public/js/render/vfx/pluginFormat.js#pluginFxProblems"
+  },
+  {
+    "name": "overlay.fx.bindEvents",
     "anchor": "public/js/render/vfx/pluginFormat.js#pluginFxProblems"
   },
   {

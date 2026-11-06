@@ -18,7 +18,9 @@ export class MatchCombat {
     const full = { data: this.ds, content: this.battleContent, logger: this.log, ...opts, ...morphBattleOpt(this.rules),
       ...(preview ? { logger: {}, quiet: true } : {}) };
     try {
-      return new this.BattleClass(full);
+      const battle = new this.BattleClass(full);
+      this._attachEndlessProtocol(battle);
+      return battle;
     } catch (e) {
       if (!preview) this.reportError(`battle ${opts.fieldId} construct`, e);
       return new DeadBattle(full, 'forced');
@@ -70,7 +72,9 @@ export class MatchCombat {
       spawns: this._sanitizeSpawns(Array.isArray(ev.spawns) ? ev.spawns : spawns, ps.playerId),
       routes: wave.routes,
       sharedBoss: null,
-      flags: { layerGainsEnabled: true, ...this.gd.dp },
+      flags: { layerGainsEnabled: true, ...this.gd.dp,
+        ...(this.endlessActive() ? { layerCap: null, endlessControlResist: this.wave?.endless?.controlResist || 0.1,
+          endlessHardControlCap: true, endlessLiveEnemyCap: this.wave?.endless?.liveEnemyCap || 60 } : {}) },
       fieldId: `n:${ps.playerId}`,
       enemyOverrides: wave.overrides,
       waveId: wave.templateId,

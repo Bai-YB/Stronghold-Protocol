@@ -433,6 +433,13 @@ function SettleTestMark({ res }) {
   return html`<span class="settle__test" data-testid="settle-test"><${TestMark} /> ${t('测试对局')}${Number.isInteger(res.testActions) ? html` · ${t('测试指令 {n} 次', { n: res.testActions })}` : null}</span>`;
 }
 
+function EndlessSettlement({ res }) {
+  const e = res?.endless;
+  if (!e) return null;
+  return html`<div class="sendless-stat"><b>${t('常规段通关 · 无尽成绩')}</b><span>${t('完成无尽第 {n} 回合', { n: e.completedRounds || 0 })}</span>
+    <small>${e.saving === 'saved' ? t('成绩已保存至服务器排行榜') : t('成绩待保存')}</small></div>`;
+}
+
 function SelfPage({ r, res, raw, self, gd, prog, content, onNext, version = null }) {
   const cleared = rowCleared(raw, self, r.victory);
   const [leaving, setLeaving] = useState(false);
@@ -465,6 +472,7 @@ function SelfPage({ r, res, raw, self, gd, prog, content, onNext, version = null
       <div class="sself__band">${self.bandId ? html`<${BandIcon} bandId=${self.bandId} size="lg" />` : html`<${PlayerAvatar} player=${self} self=${true} />`}<i aria-hidden="true"></i></div>
       <div class="sself__mode"><${ModePill} r=${r} /><${UnofficialMark} room=${content ? { content } : null} class="sself__modmark" /><${VersionTag} version=${version} class="sself__vertag" /><${SettleTestMark} res=${res} /></div>
       <${SettleTitle} class="sself__title">${cleared ? t('模拟完成') : t('模拟中断')}</${SettleTitle}>
+      <${EndlessSettlement} res=${res} />
       <div class="sself__rounds"><span>${t('通过回合')}</span><b class="num">${rounds}</b></div>
       ${medals.length ? html`<div class="sself__medals">${medals.map((m, i) => html`<${Medal} key=${m.kind} m=${m} i=${i} />`)}</div>` : null}
       <div class="splate">
@@ -562,6 +570,7 @@ function TeamPage({ r, res, gd, myId, at: when, content, backLabel, onBack, onDe
       <div class="steam__outcome">
         <span class="steam__tags"><${ModePill} r=${r} /><${UnofficialMark} room=${content ? { content } : null} /><${VersionTag} version=${version} /><${SettleTestMark} res=${res} /></span>
         <${SettleTitle} as="b" class="steam__title">${r.victory ? t('模拟完成') : t('模拟中断')}</${SettleTitle}>
+        <${EndlessSettlement} res=${res} />
       </div>
       <div class="steam__rounds"><span>${t('同盟通过回合')}</span><b class="num">${rounds}</b></div>
       <div class="steam__when">

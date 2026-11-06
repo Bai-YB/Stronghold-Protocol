@@ -578,7 +578,9 @@ export const retryContentSet = () => { retryHook?.(); };
  * set the page holds, or null (the original content: the runner loads /data/ itself).
  */
 export const simContent = () => (held && held.canSim !== false ? { scripts:held.scripts || [], hashInput:held.index, nativeVerified:held.nativeVerified,
-  cs: held.cs, data: Object.fromEntries(held.values), bounds: held.bounds ?? null, ...(held.version ? { version: held.version } : {}) } : null);
+  cs: held.cs, data: Object.fromEntries(held.values), bounds: held.bounds ?? null, ...(held.version ? { version: held.version } : {}),
+  // a plain-data set (no scripts, no rules — custom-room's seats/timers) simulates in this page: 作战统计 keeps working
+  ...(held.index?.dataOnly ? { dataOnly: true } : {}) } : null);
 
 /**
  * The content set `cs` once this page holds it — at once when it does, when its download is done when it is the one

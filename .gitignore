@@ -44,6 +44,11 @@ plugins/*
 !plugins/README.md
 !plugins/AGENTS.md
 !plugins/_template/
+!plugins/custom-room/
+plugins/custom-room/*
+!plugins/custom-room/README.md
+!plugins/custom-room/plugin.json
+!plugins/custom-room/plugin.lock.json
 
 # --- tests & logs ----------------------------------------------------------------------------------
 test/e2e/out/

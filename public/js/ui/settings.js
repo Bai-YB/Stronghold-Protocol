@@ -50,7 +50,6 @@ import { pluginMicro } from './pluginTag.js';
 // test/ui/plugins.e2e.test.js pins that a server without plugins never fetches it).
 import { hasAnySkinChoices } from './skins.js';
 import { fxAvailable } from '../render/vfx/available.js';
-import { resolveOfficialFx } from '../render/vfx/tier.js';
 import { ScreenFitSection } from './screenFit.js';
 import { askPersistStorage, importSupport, storagePersisted } from '../assetCache.js';
 import { assetImport, pruneImportedAssets } from '../assetPack.js';
@@ -116,16 +115,17 @@ function Toggle({ label, micro, value, onChange }) {
   </div>`;
 }
 
-/** Display order only: 低 / 中 / 高, the same direction as 官方特效 关 / 精简 / 完整. Stored values stay high | medium | low. */
+/** Display order only: 低 / 中 / 高, the same direction as 官方特效 关 / 完整. Stored values stay high | medium | low. */
 const QUALITY = [['low', N_('低')], ['medium', N_('中')], ['high', N_('高')]];
 /**
  * 官方特效 (0.3.0, render/vfx): the official battle effects the server's owner extracted from their own client (the
  * server serves them: every player of that server sees the owner's extraction) — normal attacks, projectiles, hits,
- * statuses, deaths, deploys, the operators' skills and a 秘术师's stored energies; 关 / 精简 / 完整. The stored default
- * 'auto' shows as the tier it resolves to (完整 on a desktop, 精简 on a touch device, render/vfx/tier.js); the row is
+ * statuses, deaths, deploys, the operators' skills and a 秘术师's stored energies; 关 / 完整. 关 draws this repo's own
+ * skill and hit effects (a retired 'lite' reads as 关); the row is
  * left out when no effects were extracted (data/local-fx.json lists none).
  */
-const OFFICIAL_FX = [['off', N_('关')], ['lite', N_('精简')], ['full', N_('完整')]];
+// 精简已并入关闭（两者都渲染本仓库自带的技能与打击特效）：老存档里的 'lite' 由 gameLogic/settings.js 归一到 'off'
+const OFFICIAL_FX = [['off', N_('关')], ['full', N_('完整')]];
 /**
  * 文字大小: one step of TEXT_SIZES (ui/gameLogic/settings.js) with its label — 小 is the design's own sizes, the others
  * raise the text root `--t` (css/theme.css) and with it every readable font-size; the board and the HUD's boxes stay.
@@ -469,7 +469,8 @@ export function SettingsModal({ open, onClose }) {
     const off = cosmetics.subscribe(update);
     return () => { live = false; off(); };
   }, [open]);
-  const fxTier = resolveOfficialFx(s.officialFx, true);
+  // 高亮按玩家选的那一档（精简 / 关闭 现在表现相同，仍各自保留选中态）
+  const fxTier = s.officialFx;
   return html`<${Modal} open=${open} onClose=${onClose} title=${t('设置')} micro="SETTINGS" width="7.4rem"
                         actions=${html`<${Button} variant="secondary" icon="book" class="set-guide" onClick=${() => openGuide(0)}>${t('玩法说明')}<//>
                         <${Button} variant="primary" icon="check" onClick=${onClose}>${t('完成')}<//>`}>
@@ -529,7 +530,7 @@ export function SettingsModal({ open, onClose }) {
             class=${fxTier === id ? 'is-on' : ''} onClick=${() => updateSettings({ officialFx: id })}>${t(label)}</button>`)}
         </div>
       </div>
-      <p class="set-hint">${t('使用服主从自己的游戏客户端提取的官方战斗特效（普攻、弹道、命中、状态、阵亡、部署，干员、召唤物和敌人的技能与天赋，以及秘术师储存的能量），连到这台服务器的玩家看到的都是服主提取的这一份；提取里没有的或对战中没有时机的（如只在游戏内部条件下触发的天赋效果）仍为本作的特效。精简：半分辨率贴图、粒子减半，适合手机。只在 3D 棋盘上显示。')}</p>` : null}
+      <p class="set-hint">${t('完整：使用服主从自己的游戏客户端提取的官方战斗特效（普攻、弹道、命中、状态、阵亡、部署，干员、召唤物和敌人的技能与天赋）。关闭：使用本作自带的技能与打击特效。只在 3D 棋盘上显示。')}</p>` : null}
       <div class="set-row">
         <span class="set-row__label">${t('文字大小')}<${MicroLabel}>TEXT SIZE<//></span>
         <div class="set-seg set-textsize" role="radiogroup" aria-label=${t('文字大小')} data-testid="text-size">

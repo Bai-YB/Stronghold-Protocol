@@ -3,7 +3,8 @@
 //
 // Model:
 //   * Every visible (non-hidden, non-DIY) base chess that is not banned this match has `cap` copies
-//     (config.economy.poolCopies[tier], measured identity overrides; co-op shared stock doubled). `left` is the
+//     (config.economy.poolCopies[tier], measured identity overrides; co-op shared stock doubled, then custom-room
+//     shared stock scales with occupied seats). `left` is the
 //     signed capacity minus occupation; the public left() and shop sampling clamp a deficit to zero.
 //   * Owning a piece takes copies: a normal piece holds 1, an elite holds 3 (merge of 3 normals). Shop displays
 //     do NOT reserve copies. An operator or equipment card already shown in the shop, or a reward already shown, can
@@ -67,7 +68,7 @@ export class SharedPool {
     this.entries = new Map();
     for (const id of gd.visibleChess) {
       if (ban.has(id)) continue;
-      const cap = gd.poolCopies(id);
+      const cap = gd.poolCopies(id, { sharedPool: true });
       if (cap <= 0) continue;
       this.entries.set(id, { cap, left: cap, tier: gd.tierOf(id) });
     }

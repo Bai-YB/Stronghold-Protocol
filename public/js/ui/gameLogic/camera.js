@@ -16,6 +16,16 @@ function prepPair(pub, myId) {
   return ids.slice(i - i % 2, i - i % 2 + 2);
 }
 
+function isBossPrep(pub) {
+  const r = pub?.round;
+  if (!Number.isInteger(r) || r <= 0) return false;
+  if (pub?.runKind === 'endless') {
+    const endlessRound = pub?.endless?.round;
+    return pub?.endless?.active === true && Number.isInteger(endlessRound) && endlessRound > 0 && endlessRound % 7 === 0;
+  }
+  return r === pub?.bossRound || r === pub?.hiddenRound;
+}
+
 /**
  * Camera of the own prep board (research 09 §1.2 "Final Assault, right side", DESIGN §15): in the prep of a boss round
  * (最终攻势 / 隐秘核心: `pub.round` is `bossRound` or `hiddenRound`) the pieces stand on the player's half of the shared
@@ -28,8 +38,7 @@ function prepPair(pub, myId) {
  */
 export function prepCamera(pub, myId) {
   const normal = { kind: 'prep', opts: { rect: { ...GEO.NORMAL_RECT }, side: 'L' } };
-  const r = pub?.round;
-  if (!Number.isInteger(r) || r <= 0 || !(r === pub.bossRound || r === pub.hiddenRound)) return normal;
+  if (!isBossPrep(pub)) return normal;
   const idx = prepPair(pub, myId).indexOf(myId);
   if (idx < 0) return normal; // eliminated / unknown: no board of its own on the boss field
   return { kind: 'bossPrep', opts: { side: idx % 2 === 1 ? 'R' : 'L' } };
@@ -53,8 +62,7 @@ export function teamFrameIds(pub, myId) {
   const players = Array.isArray(pub.players) ? pub.players.filter(isObj) : [];
   const me = players.find((p) => p.playerId === myId);
   if (!me || me.alive === false) return none;
-  const r = pub.round;
-  const bossRound = Number.isInteger(r) && r > 0 && (r === pub.bossRound || r === pub.hiddenRound);
+  const bossRound = isBossPrep(pub);
   if (pub.phase === PHASE.FINAL_ASSAULT || pub.phase === PHASE.HIDDEN_CORE) {
     const f = (Array.isArray(pub.fields) ? pub.fields : []).find((x) => isObj(x) && (x.kind === 'boss' || x.kind === 'hidden') && Array.isArray(x.players) && x.players.includes(myId));
     return f && f.players.length > 1 ? new Set(f.players) : none;

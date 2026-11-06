@@ -242,7 +242,7 @@
     },
     "fx": {
       "type": "object",
-      "description": "Optional 0.3.1 presentation effects, checked by server/plugins/fxAssets.js. Ownership, file/hash budgets, compiled prefab shape, PNG dimensions and frame-grid divisibility are checked on disk. See docs/PLUGINS.md §9.",
+      "description": "Presentation effects checked by server/plugins/fxAssets.js. Supports compiled plugin effects and the 0.3.1 operator/skin/enemy/event bindings for existing packages. File/hash budgets, prefab shape, PNG dimensions and frame-grid divisibility are checked on disk. See docs/PLUGINS.md §9.",
       "additionalProperties": false,
       "properties": {
         "index": {
@@ -285,6 +285,16 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 256
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 32
+              },
+              "start": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8191
               },
               "fps": {
                 "type": "number",
@@ -339,79 +349,32 @@
                 ]
               }
             },
-            "additionalProperties": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "skillStart": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
-                  "not": {
-                    "enum": [
-                      "constructor",
-                      "prototype",
-                      "__proto__"
-                    ]
-                  }
-                },
-                "skillLoop": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
-                  "not": {
-                    "enum": [
-                      "constructor",
-                      "prototype",
-                      "__proto__"
-                    ]
-                  }
-                },
-                "skillEnd": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
-                  "not": {
-                    "enum": [
-                      "constructor",
-                      "prototype",
-                      "__proto__"
-                    ]
-                  }
-                },
-                "attack": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
-                  "not": {
-                    "enum": [
-                      "constructor",
-                      "prototype",
-                      "__proto__"
-                    ]
-                  }
-                },
-                "hit": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
-                  "not": {
-                    "enum": [
-                      "constructor",
-                      "prototype",
-                      "__proto__"
-                    ]
-                  }
-                },
-                "projectile": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
-                  "not": {
-                    "enum": [
-                      "constructor",
-                      "prototype",
-                      "__proto__"
-                    ]
-                  }
-                }
-              }
-            }
+            "additionalProperties": { "$ref": "#/$defs/fxPhases" }
           }
+        },
+        "bindOperators": {
+          "type": "object",
+          "maxProperties": 512,
+          "propertyNames": { "type": "string", "pattern": "^char_[A-Za-z0-9_]{1,90}$" },
+          "additionalProperties": { "$ref": "#/$defs/fxSkillTable" }
+        },
+        "bindSkins": {
+          "type": "object",
+          "maxProperties": 1024,
+          "propertyNames": { "type": "string", "pattern": "^char_[A-Za-z0-9_]{1,90}@[A-Za-z0-9_.+-]{1,48}#[A-Za-z0-9_-]{1,16}$" },
+          "additionalProperties": { "$ref": "#/$defs/fxSkillTable" }
+        },
+        "bindEnemies": {
+          "type": "object",
+          "maxProperties": 512,
+          "propertyNames": { "type": "string", "pattern": "^enemy_[A-Za-z0-9_]{1,90}$" },
+          "additionalProperties": { "$ref": "#/$defs/fxSkillTable" }
+        },
+        "bindEvents": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
+          "additionalProperties": { "$ref": "#/$defs/fxEventBinding" }
         },
         "silentPhases": {
           "type": "array",
@@ -426,6 +389,57 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "fxBinding": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
+          "not": { "enum": ["constructor", "prototype", "__proto__"] }
+        },
+        {
+          "type": "object",
+          "required": ["effect"],
+          "additionalProperties": false,
+          "properties": {
+            "effect": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$", "not": { "enum": ["constructor", "prototype", "__proto__"] } },
+            "tint": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+            "scale": { "type": "number", "minimum": 0.05, "maximum": 8 },
+            "alpha": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    },
+    "fxPhases": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skillStart": { "$ref": "#/$defs/fxBinding" },
+        "skillLoop": { "$ref": "#/$defs/fxBinding" },
+        "skillEnd": { "$ref": "#/$defs/fxBinding" },
+        "attack": { "$ref": "#/$defs/fxBinding" },
+        "hit": { "$ref": "#/$defs/fxBinding" },
+        "projectile": { "$ref": "#/$defs/fxBinding" }
+      }
+    },
+    "fxSkillTable": {
+      "type": "object",
+      "maxProperties": 10,
+      "propertyNames": { "type": "string", "pattern": "^(?:default|[a-z0-9][a-z0-9_-]{0,95})$" },
+      "additionalProperties": { "$ref": "#/$defs/fxPhases" }
+    },
+    "fxEventBinding": {
+      "type": "object",
+      "required": ["effect"],
+      "additionalProperties": false,
+      "properties": {
+        "effect": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$", "not": { "enum": ["constructor", "prototype", "__proto__"] } },
+        "scope": { "enum": ["unit", "field"] },
+        "duration": { "type": "number", "minimum": 0.05, "maximum": 30 },
+        "tint": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+        "scale": { "type": "number", "minimum": 0.05, "maximum": 8 },
+        "alpha": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
     "path": {
       "type": "string",
       "description": "A path inside the plugin folder: letters, digits, . _ - and spaces, folders with /; no part starting with \".\" and no leading or trailing space.",

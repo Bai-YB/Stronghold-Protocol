@@ -37,6 +37,7 @@
 
 import { createRng, deriveSeed } from '../sim/rng.js';
 import { PLUGIN_ACTION_UNITS } from '../../shared/plugins/limits.js';
+import { endlessAffix, endlessGrowth } from './endless.js';
 
 const ACLOON = 'enemy_9012_acloon';
 const DEFAULT_PLACEHOLDERS = Object.freeze({
@@ -391,6 +392,46 @@ export function buildNormalWave(gd, rng, factions, round) {
   };
 }
 
+/** Endless ordinary wave: reuses the legal R13 route/template, then scales its population and public stat modifiers. */
+export function buildEndlessWave(gd, rng, factions, endlessRound, players = 1) {
+  const growth = endlessGrowth(endlessRound, { players });
+  const base = buildNormalWave(gd, rng, factions, Math.min(13, gd.lastRound - 1));
+  const scheduled = (base.spawns || []).filter((s) => s.countInTotal !== false);
+  const total = scheduled.reduce((n, s) => n + Math.max(0, Math.trunc(Number(s.count) || 0)), 0);
+  let left = growth.plannedEnemies;
+  const allocations = scheduled.map((s, i) => {
+    const remaining = scheduled.length - i;
+    const share = i === scheduled.length - 1 ? left : Math.max(1, Math.min(left - remaining + 1,
+      Math.round(growth.plannedEnemies * (Number(s.count) || 1) / Math.max(1, total))));
+    left -= share;
+    return share;
+  });
+  const affix = endlessAffix(endlessRound);
+  const modsFor = (mods = {}) => ({ ...mods,
+    hpMul: (Number(mods.hpMul) || 1) * growth.hpMul,
+    atkMul: (Number(mods.atkMul) || 1) * growth.atkMul * (affix.atkMul || 1),
+    defMul: (Number(mods.defMul) || 1) * growth.defMul * (affix.defMul || 1),
+    speedMul: (Number(mods.speedMul) || 1) * growth.speedMul * (affix.speedMul || 1),
+    resAdd: (Number(mods.resAdd) || 0) + growth.magicResAdd + (affix.resAdd || 0),
+  });
+  const spawns = [];
+  let cursor = 0;
+  for (let i = 0; i < scheduled.length; i++) {
+    const source = scheduled[i], amount = allocations[i];
+    const chunks = Math.ceil(amount / 15);
+    let countLeft = amount;
+    for (let j = 0; j < chunks; j++) {
+      const count = Math.min(15, countLeft); countLeft -= count;
+      spawns.push({ ...source, time: Math.max(0, Number(source.time) || 0) + cursor * 1.25,
+        count, interval: count > 1 ? 0.35 : 0, mods: modsFor(source.mods) });
+      cursor++;
+    }
+  }
+  for (const s of (base.spawns || []).filter((x) => x.countInTotal === false)) spawns.push({ ...s, mods: modsFor(s.mods) });
+  return { ...base, spawns, timeLimit: Math.max(120, base.timeLimit || 0), endless: { ...growth, affix,
+    controlResist: Math.min(0.60, growth.controlResist + (affix.controlResist || 0)) } };
+}
+
 /**
  * Boss / hidden round template for one boss field; escorts follow the pick of the round's own slot.
  * @param {{ bossId: string, solo: boolean }} opts solo → `_s` template (lone player or solo mode)
@@ -420,6 +461,50 @@ export function buildBossWave(gd, rng, factions, round, { bossId, solo }) {
     entries: entriesView(gd, pick),
     actions,
   };
+}
+
+/** Endless boss wave composed from one or two supported leader templates. Boss pools stay independent, and the public
+ * modifiers are applied to both leaders and their escorts before the prep preview is generated. */
+export function buildEndlessBossWave(gd, rng, factions, endlessRound, { bossIds, solo, players = 1 }) {
+  const ids = Array.isArray(bossIds) && bossIds.length ? bossIds.slice(0, 2) : ['boss_1'];
+  const growth = endlessGrowth(endlessRound, { boss: true, players });
+  const affix = endlessAffix(endlessRound);
+  const waves = ids.map((bossId) => buildBossWave(gd, rng, factions, gd.bossRound, { bossId, solo }));
+  const routes = [];
+  const extraRoutes = [];
+  const spawns = [];
+  const overrides = {};
+  const bossPoolByEnemy = {};
+  waves.forEach((wave, bossIndex) => {
+    const bossId = ids[bossIndex];
+    const bossDef = gd.boss(bossId);
+    if (bossDef?.enemyKey) bossPoolByEnemy[bossDef.enemyKey] = bossId;
+    const routeOffset = routes.length;
+    routes.push(...wave.routes);
+    extraRoutes.push(...(wave.extraRoutes || []));
+    Object.assign(overrides, wave.overrides || {});
+    for (const original of wave.spawns || []) {
+      const spawn = { ...original, mods: { ...(original.mods || {}) }, routeIndex: (original.routeIndex || 0) + routeOffset };
+      if (spawn.tag === 'boss') {
+        spawn.bossPoolKey = bossId;
+        spawn.mods.atkMul = (Number(spawn.mods.atkMul) || 1) * growth.atkMul * (ids.length > 1 ? 0.8 : 1) * (affix.atkMul || 1);
+        spawn.mods.defMul = (Number(spawn.mods.defMul) || 1) * growth.defMul * (affix.defMul || 1);
+        spawn.mods.speedMul = (Number(spawn.mods.speedMul) || 1) * growth.speedMul * (affix.speedMul || 1);
+        spawn.mods.resAdd = (Number(spawn.mods.resAdd) || 0) + growth.magicResAdd + (affix.resAdd || 0);
+        // Keep the pair visually distinct from their shared center spawn while their individual HP bars remain clear.
+        if (ids.length > 1 && !Array.isArray(spawn.pos)) spawn.pos = [3, bossIndex === 0 ? 8 : 12];
+      } else {
+        spawn.mods.hpMul = (Number(spawn.mods.hpMul) || 1) * growth.hpMul;
+        spawn.mods.atkMul = (Number(spawn.mods.atkMul) || 1) * growth.atkMul * (affix.atkMul || 1);
+        spawn.mods.defMul = (Number(spawn.mods.defMul) || 1) * growth.defMul * (affix.defMul || 1);
+        spawn.mods.speedMul = (Number(spawn.mods.speedMul) || 1) * growth.speedMul * (affix.speedMul || 1);
+        spawn.mods.resAdd = (Number(spawn.mods.resAdd) || 0) + growth.magicResAdd + (affix.resAdd || 0);
+      }
+      spawns.push(spawn);
+    }
+  });
+  return { ...waves[0], templateId: waves.map((w) => w.templateId).join('+'), bossIds: ids, spawns, routes, extraRoutes,
+    overrides, bossPoolByEnemy, endless: { ...growth, affix, controlResist: Math.min(0.75, growth.controlResist + (affix.controlResist || 0)) } };
 }
 
 /** Boss-field column that splits the left (L) and the right (R) player's half (the goals are at cols 2–3 / 17). */

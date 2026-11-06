@@ -111,6 +111,11 @@ export class Battle {
       this.flags[k] = this.flags[k] != null && Number.isFinite(v) && v >= 0 ? v : DP_DEFAULTS[k];
     }
     this.sharedBoss = opts.sharedBoss ?? null;
+    this.bossPools = opts.bossPools && typeof opts.bossPools === 'object' ? opts.bossPools : null;
+    this.bossPoolByEnemy = Object.assign(Object.create(null), opts.bossPoolByEnemy || {});
+    for (const spawn of opts.spawns ?? []) if (spawn?.tag === 'boss' && typeof spawn.enemyKey === 'string' && typeof spawn.bossPoolKey === 'string') {
+      this.bossPoolByEnemy[spawn.enemyKey] = spawn.bossPoolKey;
+    }
     this.routes = (opts.routes ?? []).map((r) => normalizeRoute(r));
     /** Per-template enemy overrides `{ [enemyKey]: { stats: {…partial} } }` (waves.json `overrides`). */
     this.enemyOverrides = opts.enemyOverrides ?? {};

@@ -1,0 +1,35 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "manifest": 2,
+  "name": { "zh": "自定义对局规则", "en": "Custom match rules" },
+  "description": {
+    "zh": "为大厅里的独立自定义对局入口提供席位、选择计时与多人分组规则。",
+    "en": "Provides seat, selection timer, and group rules for the separate custom match entry."
+  },
+  "version": "1.1.0",
+  "app": ">=0.3.0 <0.4.0",
+  "api": 1,
+  "class": "content",
+  "scope": ["room"],
+  "sourceLang": "zh",
+  "license": "CC0-1.0",
+  "settings": {
+    "seatCapacity": {
+      "type": "integer",
+      "min": 2,
+      "max": 20,
+      "step": 1,
+      "default": 8,
+      "label": { "zh": "席位数量", "en": "Seat capacity" }
+    },
+    "untimedChoices": {
+      "type": "boolean",
+      "default": false,
+      "label": { "zh": "选择不限时", "en": "Unlimited selection time" }
+    }
+  },
+  "room": {
+    "capacity": "seatCapacity",
+    "untimedChoices": "untimedChoices"
+  }
+}

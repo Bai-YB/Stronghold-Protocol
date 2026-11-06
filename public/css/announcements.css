@@ -1,0 +1,85 @@
+/* Host announcements share the game's dark control-room palette; emergency messages use a high-contrast red strip. */
+.urgent-announcement-host {
+  position: fixed; z-index: 130; top: calc(.08rem + var(--sa-t, 0px)); left: 50%;
+  display: grid; gap: 2px; width: min(17rem, calc(100vw - .32rem));
+  transform: translateX(-50%); pointer-events: none;
+}
+.urgent-announcement {
+  position: relative; display: grid; grid-template-columns: auto minmax(0,1fr) .34rem; align-items: center; gap: .12rem;
+  min-height: .56rem; padding: .06rem .1rem .06rem .16rem; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.75); background: #c21f2f; color: #fff;
+  box-shadow: 0 .06rem .2rem rgba(0,0,0,.55); pointer-events: auto;
+}
+.urgent-announcement::before { position: absolute; inset: 0 auto 0 0; width: 3px; background: #fff; content: ''; }
+.urgent-announcement--welcome { grid-template-columns: auto minmax(0,1fr) auto .34rem; }
+.urgent-announcement__label { display: inline-flex; align-items: center; gap: .065rem; color: #fff; font: 800 .17rem var(--font-display); letter-spacing: .05em; white-space: nowrap; }
+.urgent-announcement__label::before { width: .06rem; height: .06rem; border-radius: 50%; background: #fff; content: ''; }
+.urgent-announcement__viewport { min-width: 0; overflow: hidden; }
+.urgent-announcement__track { display: flex; width: max-content; animation: urgent-announcement-marquee var(--notice-duration,30s) linear infinite; }
+.urgent-announcement__track span { flex: 0 0 auto; padding-right: 2.5rem; color: #fff; font-size: .21rem; font-weight: 800; text-shadow: 0 1px 2px rgba(0,0,0,.4); white-space: nowrap; }
+.urgent-announcement__link { color: #fff; font: 700 .13rem var(--font-display); text-decoration: underline; text-underline-offset: .025rem; white-space: nowrap; }
+.urgent-announcement__link:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.urgent-announcement:hover .urgent-announcement__track,
+.urgent-announcement:focus-within .urgent-announcement__track { animation-play-state: paused; }
+.urgent-announcement__close {
+  display: grid; place-items: center; width: .3rem; height: .3rem; padding: 0; border: 1px solid rgba(255,255,255,.72);
+  background: rgba(255,255,255,.08); color: #fff; font-size: .22rem; line-height: 1; cursor: pointer;
+}
+.urgent-announcement__close:hover { background: rgba(255,255,255,.2); }
+.urgent-announcement__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@keyframes urgent-announcement-marquee { to { transform: translateX(var(--notice-shift,-50%)); } }
+
+@media (max-width: 760px) {
+  .urgent-announcement, .urgent-announcement--welcome { grid-template-columns: auto minmax(0,1fr) .32rem; gap: .07rem; }
+  .urgent-announcement--welcome .urgent-announcement__viewport { grid-column: 2; grid-row: 1; }
+  .urgent-announcement--welcome .urgent-announcement__link { grid-column: 2; grid-row: 2; justify-self: start; font-size: .12rem; }
+  .urgent-announcement--welcome .urgent-announcement__close { grid-column: 3; grid-row: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .urgent-announcement__track { width: auto; animation: none; }
+  .urgent-announcement__track span[aria-hidden="true"] { display: none; }
+}
+
+/* The title/lobby bell opens a compact notice rail; it remains scrollable on short screens. */
+.notice-slot { position: relative; display: inline-flex; align-items: center; }
+.notice-entry {
+  position: relative; display: grid; place-items: center; width: .42rem; height: .42rem; padding: 0;
+  border: 1px solid rgba(246,163,41,.55); background: rgba(246,163,41,.1); color: #ffc45c; cursor: pointer;
+  transition: border-color .18s, background .18s, color .18s;
+}
+.notice-entry:hover { border-color: var(--amber); background: rgba(246,163,41,.18); color: #fff; }
+.notice-entry:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.notice-entry__icon { width: .21rem; height: .21rem; }
+.notice-entry__dot {
+  position: absolute; top: -.025rem; right: -.025rem; width: .09rem; height: .09rem; border: 1px solid var(--bg-0);
+  border-radius: 50%; background: #ff3547; box-shadow: 0 0 .08rem rgba(255,53,71,.7);
+}
+.notice-popover {
+  position: absolute; z-index: 150; left: 0; bottom: calc(100% + .1rem); display: grid; grid-template-rows: auto minmax(0,1fr) auto;
+  width: min(4.4rem, calc(100vw - .32rem)); max-height: min(62vh, 5.8rem); overflow: hidden;
+  border: 1px solid var(--line-3); background: rgba(12,15,14,.98); color: var(--text-hi); box-shadow: 0 .12rem .4rem rgba(0,0,0,.62);
+}
+.notice-popover__heading { display: flex; align-items: center; justify-content: space-between; gap: .12rem; padding: .12rem .14rem; border-bottom: 1px solid var(--line); }
+.notice-popover__heading strong { color: var(--text-hi); font: 700 .17rem var(--font-display); letter-spacing: .08em; }
+.notice-popover__close { display: grid; place-items: center; width: .3rem; height: .3rem; padding: 0; border: 1px solid var(--line-2); background: transparent; color: var(--text-md); font-size: .2rem; line-height: 1; cursor: pointer; }
+.notice-popover__close:hover { border-color: var(--amber); color: #fff; }
+.notice-popover__close:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.notice-popover__body { display: grid; align-content: start; gap: .1rem; padding: .12rem; overflow: auto; }
+.notice-popover__section-title { margin: .02rem 0; color: var(--amber); font: 700 .11rem var(--font-display); letter-spacing: .1em; }
+.notice-popover__empty { margin: 0; padding: .2rem .1rem; color: var(--text-lo); font-size: .13rem; text-align: center; }
+.notice-popover .notice-list { display: grid; gap: .08rem; max-height: none; overflow: visible; }
+.notice-popover .notice-card { padding: .1rem .12rem; border-color: var(--line); background: rgba(255,255,255,.025); }
+.notice-popover .notice-card--urgent { border-color: rgba(255,53,71,.5); background: rgba(194,31,47,.13); }
+.notice-popover .notice-card__badge { display: inline-block; margin-right: .05rem; color: #ff6672; font-size: .1rem; font-weight: 700; }
+.notice-popover .notice-card__title { margin: .05rem 0; line-height: 1.45; }
+.notice-popover .notice-card__body { margin: .04rem 0 0; font-size: .13rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice-popover__footer { padding: .1rem .12rem; border-top: 1px solid var(--line); }
+.notice-popover__footer a { display: block; padding: .09rem; border: 1px solid var(--line-2); color: var(--mint-400); font-size: .12rem; text-align: center; text-decoration: none; }
+.notice-popover__footer a:hover { border-color: var(--mint-400); background: var(--mint-a10); }
+.notice-popover__footer a:focus-visible { outline: 2px solid var(--mint-400); outline-offset: 2px; }
+.lobby-screen .notice-popover { top: calc(100% + .08rem); bottom: auto; }
+@media (max-width: 760px) {
+  .notice-popover { width: min(3.8rem, calc(100vw - .24rem)); max-height: min(58vh, 5.4rem); }
+  .title-screen .notice-popover { left: -.08rem; }
+  .lobby-screen .notice-popover { left: -.08rem; }
+}

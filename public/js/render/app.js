@@ -200,7 +200,7 @@ export async function createFieldView(host, options = {}) {
   signal?.throwIfAborted();
   const assets = resolveAssets(opts.assets);
   const data = makeData(opts.data);
-  const settings = { damageNumbers: true, officialDamageNumbers: false, ammoEnergyCount: false, quality: 'high', officialFx: 'auto', ...(opts.settings || {}) };
+  const settings = { damageNumbers: true, officialDamageNumbers: false, ammoEnergyCount: false, quality: 'high', officialFx: 'full', ...(opts.settings || {}) };
   // 设置「显示其他玩家的皮肤」 (docs/SKINS.md), on unless the caller said off: kept out of the literal above so the shape
   // the other settings the units read every frame are pinned by stays one line (test/ui/ammo-count.test.js)
   settings.otherSkins = settings.otherSkins !== false;
@@ -430,13 +430,23 @@ export async function createFieldView(host, options = {}) {
   ctx.ofx = ofx;
   // Read the index only after the existing effects path loads it; role selection never calls ready()/index().
   ctx.skillAttackIndex = () => wiring.index;
-  const pluginFx = new PluginFxPlayer({ P, layer: layers.vfxOver, assets, cam: () => cam, enabled: () => settings.officialFx !== 'off',
+  const pluginFx = new PluginFxPlayer({ P, layer: layers.vfxOver, screenLayer: layers.screen,
+    screenSize: () => ({ width: app.renderer.screen.width, height: app.renderer.screen.height }),
+    assets, cam: () => cam, enabled: () => resolveOfficialFx(settings.officialFx, true) === 'full', quality: () => settings.quality,
+    tier: () => resolveOfficialFx(settings.officialFx, true), load: () => loadLevel,
     record: info => info ? ctx.lookupDef(info) : null, speed: projSpeed, ofx });
   setupCleanup.push(() => pluginFx.destroy());
   let ofxPrevT = null;        // renderT of the last effects step (the battle clock)
   /** The tier the effects run at now: the setting (auto: 精简 on touch devices) while the 3D board draws. */
   function syncOfficialFx() {
     ofx.setTier(board3d ? resolveOfficialFx(settings.officialFx, ofx.available) : 'off');
+  }
+  let ofxInitTries = 0;
+  /** Retry a file list that was unavailable when the view was built: effects must not need a page reload. */
+  function ensureOfficialFx() {
+    if (destroyed || ofx.available || ofxInitTries >= 3) return;
+    ofxInitTries++;
+    ofx.init().then((ok) => { if (!destroyed && ok) { syncOfficialFx(); wiring.ready(); } }, () => {});
   }
   ofx.init().then((ok) => { if (!destroyed && ok) { syncOfficialFx(); wiring.ready(); } }, () => {});
   // battle devices (crates / turrets as sim units): the official crate mesh in the 3D scene, else a Pixi box
@@ -742,6 +752,7 @@ export async function createFieldView(host, options = {}) {
 
   function setStage(st) {
     if (!st || typeof st !== 'object' || !Array.isArray(st.rows)) return false;
+    pluginFx.clearField();
     stageRec = st;
     tiles.setStage(st);
     tiles.setBattleRect(mode === 'battle' && battleMeta ? battleMeta.rect : null);
@@ -1523,6 +1534,7 @@ export async function createFieldView(host, options = {}) {
     clearHl();
     renderT0Battle = null;
     mode = 'battle';
+    ensureOfficialFx();  // a cold start whose file list missed retries here, before the first attack can land
     const rect = meta.rect ? normRect(meta.rect) : (meta.kind === 'boss' || meta.kind === 'hidden' ? { ...GEO.BOSS_RECT } : meta.kind === 'unite' ? { ...GEO.UNITE_RECT } : { ...GEO.NORMAL_RECT });
     // prep: true = a read-only scouting board (a teammate's lineup during prep): prep-style pieces, no bars
     battleMeta = { fieldId: meta.fieldId ?? null, kind: meta.kind || 'normal', rect, stageId: meta.stageId ?? null, prep: meta.prep === true };
@@ -1747,7 +1759,7 @@ export async function createFieldView(host, options = {}) {
       // (and its official skill effects: render/vfx/skillfx.js cast — index v2 has the enemies' skills)
       // an attack-class skill cast in the attack's turn ['cast', id, slot, dur, clip] plays its clip in place of the attack
       // (UnitView.onCast; DESIGN §35.57)
-      case 'cast': { const v = views.get(e[1]); if (v) { v.setSkillSlot?.(e[2] | 0); v.onCast?.(e[2] | 0, now, e.length > 4 ? Number(e[4]) || 0 : null); wiring.enemyCast(v, e[2] | 0, Number(e[3]) || 0); } break; }
+      case 'cast': { const v = views.get(e[1]); if (v) { const slot = e[2] | 0, duration = Number(e[3]) || 0; v.setSkillSlot?.(slot); v.onCast?.(slot, now, e.length > 4 ? Number(e[4]) || 0 : null); if (!pluginFx.cast(v, slot, duration)) wiring.enemyCast(v, slot, duration); } break; }
       case 'die': {
         const v = views.get(e[1]);
         const used = consumedIds.delete(e[1]);
@@ -2323,6 +2335,7 @@ export async function createFieldView(host, options = {}) {
       pick: { pieceAt, mapCharAt, battleUnitAt, penUnitAt, groundTile },
     },
   };
+  try { globalThis.__spDebug = view; } catch { /* diag */ }
   // All teardown dependencies now exist. Aborting during either asset wait immediately releases
   // the renderer, ticker and listeners; late shared asset results see destroyed and do nothing.
   setupCleanup.length = 0;

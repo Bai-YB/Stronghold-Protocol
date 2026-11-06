@@ -108,7 +108,13 @@ export class FxLibrary {
   /** Load the file list (once). Resolves to `available`. */
   init() {
     if (this._init) return this._init;
-    this._init = (async () => {
+    // A "no effects" result is not cached: a file list that was unavailable at the first attempt is asked for again
+    // on the next call instead of pinning the layer off until a reload.
+    this._init = this._loadGroups().then((ok) => { if (!ok) this._init = null; return ok; }, (error) => { this._init = null; throw error; });
+    return this._init;
+  }
+
+  async _loadGroups() {
       let list = this.list;
       if (!list && this.listUrl === FX_LIST_URL && this.fetch === this._defaultFetch) list = await loadFxList(this.fetch);
       else if (!list && this.fetch) {
@@ -136,8 +142,6 @@ export class FxLibrary {
       if (this.groups) for (const _k in this.groups['fx/prefabs']) { this._available = true; break; }
       if (this.pluginFx.descriptors.size) this._available = true;
       return this._available;
-    })();
-    return this._init;
   }
 
   /** Effects were extracted (the file list names prefabs). */

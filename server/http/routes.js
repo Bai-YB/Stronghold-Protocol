@@ -22,6 +22,11 @@ import { PROTOCOL_VERSION, APP_VERSION } from '../../shared/constants.js';
 import { buildTag } from './buildTag.js';
 import { setSecurityHeaders, sendError, sendJson, splitUrl } from './common.js';
 import { clientAddress, isLocalIp } from '../net.js';
+import { createAnnouncementStore } from './announcements.js';
+import { createAdminHandler, createMetricsSampler as createAdminMetricsSampler, isSameOrigin, readJson, requestIsSecure } from './admin.js';
+import { createPollStore, createPublicPollHandler } from './polls.js';
+import { createSiteSettingsStore } from './siteSettings.js';
+import { createMetricsSampler, publicStatusReport } from './monitor.js';
 
 const MAX_URL_LENGTH = 4096;
 
@@ -90,12 +95,47 @@ const wantsTraffic = (query) => /(?:^|&)traffic(?:=(?:1|true|yes))?(?:&|$)/i.tes
  *   plugin studio (server/studio/index.js), or none
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void}
  */
-export function createRequestHandler({ serveStatic, health, log, trustProxy = 'auto', studio = null, csp = null, trustedRuntime = null }) {
+export function createRequestHandler({ serveStatic, health, log, trustProxy = 'auto', studio = null, csp = null, trustedRuntime = null,
+  announcements = createAnnouncementStore(), metrics = createMetricsSampler(), polls = createPollStore(), siteSettings = createSiteSettingsStore() }) {
+  const admin = createAdminHandler({ health, studio, trustProxy, announcements, polls, siteSettings, metrics: createAdminMetricsSampler() });
+  const publicPolls = createPublicPollHandler({ polls, trustProxy, readJson, isSameOrigin, requestIsSecure });
   async function handleRequest(req, res) {
     const url = req.url || '/';
     if (url.length > MAX_URL_LENGTH) { sendError(req, res, 414, '请求地址过长 · URI too long'); return; }
     const parts = splitUrl(url);
     if (!parts) { sendError(req, res, 400, '请求地址无效 · Bad request'); return; }
+    if (parts.rawPath === '/admin/api' || parts.rawPath.startsWith('/admin/api/')) {
+      await admin(req, res, parts.rawPath);
+      return;
+    }
+    if (parts.rawPath === '/polls/api' || parts.rawPath.startsWith('/polls/api/')) {
+      await publicPolls(req, res, parts.rawPath);
+      return;
+    }
+    if (parts.rawPath === '/status/api' || parts.rawPath === '/announcements/api' || parts.rawPath === '/site-settings/api') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.setHeader('Allow', 'GET, HEAD');
+        sendError(req, res, 405, '不支持的请求方法 · Method not allowed');
+        return;
+      }
+      if (parts.rawPath === '/status/api') {
+        sendJson(req, res, 200, await publicStatusReport(health, announcements, metrics));
+        return;
+      }
+      if (parts.rawPath === '/site-settings/api') {
+        sendJson(req, res, 200, { settings: await siteSettings.get() });
+        return;
+      }
+      const limits = new URLSearchParams(parts.query).getAll('limit');
+      if (limits.length > 1 || (limits.length === 1 && !/^[2-5]$/.test(limits[0]))) {
+        sendError(req, res, 400, '公告查询条数必须为 2 到 5 条 · Announcement limit must be 2 to 5');
+        return;
+      }
+      const limit = limits.length ? Number(limits[0]) : undefined;
+      const list = limit === undefined ? await announcements.publicList() : await announcements.publicHistory(limit);
+      sendJson(req, res, 200, { announcements: list });
+      return;
+    }
     if (trustedRuntime && parts.rawPath.startsWith('/x/') && await trustedRuntime.route(req,res,parts.rawPath)) return;
     if (studio && studio.handles(parts.rawPath)) { await studio.handle(req, res, parts.rawPath, parts.query); return; }
     if (req.method !== 'GET' && req.method !== 'HEAD') {

@@ -228,8 +228,10 @@
 //     another content keeps only the ids whose operator (charId) is the same in both data sets.
 
 import { aiTakeover, resetAiTakeover, reconcileAiTakeover } from './aiTakeover.js';
-import { randomBytes, randomInt } from 'node:crypto';
-import { DIFFICULTIES, ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DIFFICULTIES, ERR, MAX_ROOM_SEATS, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
 import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks, charPotentialChanges, checkSkinSelection, operatorCharIds } from '../shared/protocol.js';
 import { encode, isErrCode, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
@@ -237,10 +239,12 @@ import { Match as DefaultMatch } from './match/Match.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
 
 const VANILLA_KITTED = new Set(KITTED_CHARS);
+const CUSTOM_ROOM_PLUGIN_ID = 'custom-room';
 import { isContentHash } from '../shared/plugins/identity.js';
 import { ruleOption } from '../shared/plugins/rules.js';
 import { msg, wireMessage } from '../shared/i18n.js';
 import { DEFAULT_VERSION } from '../shared/versions.js';
+import { EndlessLeaderboardStore } from './match/endless.js';
 import { parseTestModeEnv, testModeGate, unrecognizedTestMode } from './testMode.js';
 
 /** Room code alphabet: uppercase letters without I and O (and no digits, so no 0/1). */
@@ -262,6 +266,7 @@ export const LOBBY_DEFAULTS = Object.freeze({
 
 /** The stamp of a setting a version room's page sent before it reported the room's content ready (header). */
 const UNVERIFIED_CS = 'unverified';
+const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * The difficulty of a room created without one (room.create's `difficulty` left out; see the header) [ASSUMED: 标准 —
@@ -372,10 +377,15 @@ export class Room {
    * @param {string} code @param {'solo'|'coop'} mode @param {string} difficulty @param {number} now
    * @param {string} [version] the official version the room plays (header "Official versions")
    */
-  constructor(code, mode, difficulty, now, version = DEFAULT_VERSION) {
+  constructor(code, mode, difficulty, now, version = DEFAULT_VERSION, runKind = null) {
     this.code = code;
     this.mode = mode;
     this.difficulty = difficulty;
+    /** A separate custom co-op entry; ordinary rooms keep the vanilla seat and timer rules. */
+    this.custom = false;
+    this.runKind = runKind === 'endless' ? 'endless' : null;
+    /** Server-managed public co-op queue; no manual room settings or AI seats. */
+    this.matchmaking = false;
     /** the official version the room plays (shared/versions.js id; header "Official versions") */
     this.version = version;
     /**
@@ -425,6 +435,10 @@ export class Room {
     this.ownerKey = null;
     /** @type {string | null} per-network limit key of whoever started the running match */
     this.matchKey = null;
+    /** the running match's round as its m.public frames report it (a hosted match has no `match.round` the lobby can read) */
+    this.matchRound = null;
+    /** @type {Set<string>} per-network keys represented by a matchmaking match */
+    this.matchKeys = new Set();
     this.createdAt = now;
     this.disposed = false;
     /**
@@ -478,6 +492,9 @@ export class Room {
       hostId: this.hostId,
       mode: this.mode,
       difficulty: this.difficulty,
+      ...(this.custom ? { custom: true } : {}),
+      ...(this.runKind ? { runKind: this.runKind } : {}),
+      ...(this.matchmaking ? { matchmaking: true } : {}),
       aiPicksLast: this.aiPicksLast,
       inMatch: !!this.match,
       seats: this.seats.map((s) => (s
@@ -555,6 +572,7 @@ export class Lobby {
     this.MatchClass = MatchClass;
     this.getData = getData;
     this.now = now;
+    this.endlessLeaderboard = new EndlessLeaderboardStore(options.endlessLeaderboardPath || path.join(SERVER_ROOT, 'runtime', 'endless-leaderboard'), { now });
     this.seedFn = seedFn || (() => randomInt(2 ** 32));
     const testModeOpt = options.testMode;
     const testHostOpt = options.testHost;
@@ -731,6 +749,7 @@ export class Lobby {
     if (changed) this.broadcastState(room);
     else this.sendState(room, session);
     this.resync(session, !resumed);
+    if (room.matchmaking) this.tryStartMatchmaking(room);
   }
 
   /**
@@ -807,6 +826,8 @@ export class Lobby {
   handleMessage(session, msg, ctx = null) {
     switch (msg.t) {
       case 'room.create': return this.create(session, msg);
+      case 'room.matchmake': return this.matchmake(session, msg);
+      case 'endless.leaderboard.get': return this.endlessLeaderboardQuery(session, msg);
       case 'room.join': return this.join(session, msg);
       case 'room.leave': return this.leave(session);
       case 'room.ready': return this.ready(session, msg);
@@ -844,6 +865,12 @@ export class Lobby {
         if (typeof msg.t === 'string' && msg.t.startsWith('g.')) return this.routeGameNow(session, msg);
         return fail(ERR.BAD_MSG, `unhandled type ${String(msg.t).slice(0, 32)}`);
     }
+  }
+
+  endlessLeaderboardQuery(session, { seats, ai }) {
+    const view = this.endlessLeaderboard.leaderboard({ seats, ai });
+    sendSession(session, view);
+    return OK;
   }
 
   /** The session's socket closed. @param {import('./net.js').Session} session */
@@ -910,17 +937,23 @@ export class Lobby {
   // room.* handlers
   // ---------------------------------------------------------------------------------------------------
 
-  create(session, { mode, difficulty: asked, test, version: askedVersion, soloUnlimited } = {}) {
+  create(session, { mode, difficulty: asked, test, version: askedVersion, soloUnlimited, runKind, custom = false } = {}) {
+    if (runKind != null && runKind !== 'endless') return fail(ERR.BAD_MSG);
+    const endless = runKind === 'endless';
+    if (custom && (custom !== true || mode !== 'coop' || endless)) return fail(ERR.BAD_TARGET, 'custom rooms are co-op only');
+    if (endless && (mode !== 'coop' || test === true || (askedVersion != null && askedVersion !== DEFAULT_VERSION) || (asked != null && asked !== 'ABYSS'))) {
+      return fail(ERR.BAD_TARGET, 'endless mode is fixed to Second Season, Co-op, Abyss, and non-test play');
+    }
     // A test room exists only when the process switch allowed it. The check runs before the room is built.
     if (test === true && this.testEnabled !== true) return fail(ERR.TEST_DISABLED);
     // the official version (header "Official versions"): left out, the server's default
-    const version = askedVersion ?? this.defaultVersion();
+    const version = endless ? DEFAULT_VERSION : (askedVersion ?? this.defaultVersion());
     if (!this.versionEnabled(version)) return fail(ERR.VERSION_UNKNOWN);
     if (!this.offered(version, mode).length) return fail(ERR.VERSION_UNSUPPORTED, `${version} has no ${mode} rooms`);
     if (!this.versionAvailable(version)) return fail(ERR.VERSION_UNSUPPORTED, 'the data of this version is not available');
     // left out: the default (header); the protocol refuses any other value that is not a difficulty; one the version
     // lacks is lowered (终极 → 绝境)
-    const difficulty = this.fallbackDifficulty(version, mode, DIFFICULTIES.includes(asked) ? asked : DEFAULT_DIFFICULTY);
+    const difficulty = endless ? 'ABYSS' : this.fallbackDifficulty(version, mode, DIFFICULTIES.includes(asked) ? asked : DEFAULT_DIFFICULTY);
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
     if (this.rooms.size >= this.opts.maxRooms) return fail(ERR.INTERNAL, 'too many rooms');
@@ -950,6 +983,8 @@ export class Lobby {
     const code = this.genCode(fixedIsMine ? cur : null);
     if (!code) return fixed ? fail(ERR.ROOM_CODE_TAKEN, 'the fixed alliance key is in use')
       : fail(ERR.INTERNAL, 'no room code available');
+    const room = new Room(code, mode, difficulty, this.now(), version, endless ? 'endless' : null);
+    room.custom = custom === true;
     // the server owner's default plugins (plugins/config.json `default`; header "Gameplay plugins"): none — the original
     // game. On another official version (header "Official versions") gameplay plugins are refused: a server whose rooms
     // must play them (rooms: fixed) cannot make that version's room; otherwise the room starts without them. Resolved
@@ -957,16 +992,31 @@ export class Lobby {
     // (limits.maxSets), as when the room went first before M1
     let initial = this.baseContent(version);
     const defaults = this.plugins?.defaults?.() || [];
-    if (defaults.length) {
-      const r = this.resolveContent(null, defaults, {}, version, leaving ? cur.content : null);
-      if ('error' in r) {
-        const fixed = (() => { try { return this.plugins?.fixed?.() || null; } catch { return null; } })();
-        if (fixed && fixed.length && version !== DEFAULT_VERSION) return fail(ERR.VERSION_UNSUPPORTED, `this server fixes every room's plugins (plugins/config.json rooms: fixed): ${r.error}`);
-        this.warnOnce(`[lobby] the default plugins (${defaults.join(', ')}) cannot be applied${version !== DEFAULT_VERSION ? ` to ${version}` : ''}: ${r.error}${r.detail ? ` (${r.detail})` : ''}`);
-      } else initial = r.content;
+    if (room.custom) {
+      if (version !== DEFAULT_VERSION) return fail(ERR.VERSION_UNSUPPORTED, 'custom-room rules currently require the default game version');
+      const fixedPlugins = (() => { try { return this.plugins?.fixed?.() || null; } catch { return null; } })();
+      const selected = fixedPlugins || [...new Set([...defaults, CUSTOM_ROOM_PLUGIN_ID])];
+      const r = this.resolveContent(room, selected, {}, version, leaving ? cur.content : null);
+      if ('error' in r) return r;
+      if (!r.content?.roomOptions) return fail(ERR.PLUGIN_BLOCKED, 'the fixed plugin set does not include the custom-room rules');
+      initial = r.content;
+      room.seats = new Array(Math.max(2, Math.min(MAX_ROOM_SEATS, initial.roomOptions.capacity || 8))).fill(null);
+    } else {
+      // The custom-room plugin is opt-in and never joins an ordinary room through server defaults.
+      const regularDefaults = defaults.filter((id) => id !== CUSTOM_ROOM_PLUGIN_ID);
+      if (regularDefaults.length) {
+        const r = this.resolveContent(room, regularDefaults, {}, version, leaving ? cur.content : null);
+        if ('error' in r) {
+          const fixedPlugins = (() => { try { return this.plugins?.fixed?.() || null; } catch { return null; } })();
+          if (fixedPlugins && fixedPlugins.length && version !== DEFAULT_VERSION) return fail(ERR.VERSION_UNSUPPORTED, `this server fixes every room's plugins (plugins/config.json rooms: fixed): ${r.error}`);
+          this.warnOnce(`[lobby] the default plugins (${regularDefaults.join(', ')}) cannot be applied${version !== DEFAULT_VERSION ? ` to ${version}` : ''}: ${r.error}${r.detail ? ` (${r.detail})` : ''}`);
+        } else initial = r.content;
+      }
     }
+    // Endless is a ranked ruleset: gameplay plugins are excluded. Cosmetic visual sets remain allowed when their set
+    // resolves without changing the content identity; if a mixed default includes gameplay code, use vanilla content.
+    if (endless && initial?.vanilla === false) initial = this.baseContent(version);
     if (cur) this.removeMember(cur, session.playerId);
-    const room = new Room(code, mode, difficulty, this.now(), version);
     room.test = test === true;
     // 「不限时」 only on a solo room of a version whose solo is timed (header). Anywhere else the key is ignored, so a
     // stray true cannot change a default or co-op create.
@@ -983,6 +1033,115 @@ export class Lobby {
     this.log.info(`[lobby] ${code} created (${mode}/${difficulty}${version !== DEFAULT_VERSION ? `, ${version}` : ''}${room.test ? ', test' : ''}) by ${session.name}`);
     this.broadcastState(room);
     return OK;
+  }
+
+  /** Join or create an open co-op queue scoped to the official version and difficulty. */
+  matchmake(session, { difficulty: asked, version: askedVersion } = {}) {
+    if (!DIFFICULTIES.includes(asked)) return fail(ERR.BAD_MSG);
+    const version = askedVersion ?? this.defaultVersion();
+    if (!this.versionEnabled(version)) return fail(ERR.VERSION_UNKNOWN);
+    if (!this.offered(version, 'coop').length) return fail(ERR.VERSION_UNSUPPORTED, `${version} has no coop rooms`);
+    if (!this.versionAvailable(version)) return fail(ERR.VERSION_UNSUPPORTED, 'the data of this version is not available');
+    const difficulty = this.fallbackDifficulty(version, 'coop', asked);
+    const cur = this.roomOf(session);
+    if (cur?.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
+    if (cur?.matchmaking && cur.version === version && cur.difficulty === difficulty && !cur.spectatorOf(session.playerId)) {
+      this.sendState(cur, session);
+      this.tryStartMatchmaking(cur);
+      return OK;
+    }
+
+    const target = [...this.rooms.values()].find((room) => !room.disposed && room.matchmaking && !room.match
+      && room.version === version && room.difficulty === difficulty && room.freeSeat() >= 0);
+    if (target) {
+      if (cur) this.removeMember(cur, session.playerId);
+      const seat = target.freeSeat();
+      if (seat < 0) return fail(ERR.ROOM_FULL);
+      target.seats[seat] = this.humanSeat(seat, session, target);
+      session.roomCode = target.code;
+      session.notice = null;
+      session.pendingResult = null;
+      this.log.info(`[lobby] ${target.code} matchmaking joined (${version}/${difficulty}, ${target.activeHumans().length}/${MAX_SEATS}) by ${session.name}`);
+      this.broadcastState(target);
+      this.tryStartMatchmaking(target);
+      return OK;
+    }
+
+    if (this.rooms.size >= this.opts.maxRooms) return fail(ERR.INTERNAL, 'too many rooms');
+    const key = session.limitKey || null;
+    const leaving = !!cur && cur.activeHumans().length === 1 && !cur.spectatorOf(session.playerId);
+    if (key && this.opts.maxRoomsPerAddr > 0
+      && this.countRooms((room) => room.ownerKey === key) - (leaving && cur.ownerKey === key ? 1 : 0) >= this.opts.maxRoomsPerAddr) {
+      this.limitWarn(`room limit (${this.opts.maxRoomsPerAddr}) reached for ${session.addr}`);
+      return fail(ERR.RATE, 'too many rooms from your network');
+    }
+
+    const fixed = this.opts.roomCode || null;
+    const fixedIsMine = !!fixed && !!cur && this.rooms.get(fixed) === cur;
+    if (fixed) {
+      const taken = this.rooms.get(fixed);
+      const mine = cur && cur.seatOf(session.playerId);
+      const onlyMe = mine && cur.activeHumans().length === 1;
+      if (taken && !(taken === cur && onlyMe)) return fail(ERR.ROOM_CODE_TAKEN, 'the fixed alliance key is in use');
+    }
+    const code = this.genCode(fixedIsMine ? cur : null);
+    if (!code) return fixed ? fail(ERR.ROOM_CODE_TAKEN, 'the fixed alliance key is in use')
+      : fail(ERR.INTERNAL, 'no room code available');
+
+    const room = new Room(code, 'coop', difficulty, this.now(), version);
+    room.matchmaking = true;
+    let initial = this.baseContent(version);
+    const defaults = (this.plugins?.defaults?.() || []).filter((id) => id !== CUSTOM_ROOM_PLUGIN_ID);
+    if (defaults.length) {
+      const resolved = this.resolveContent(room, defaults, {}, version, leaving ? cur.content : null);
+      if ('error' in resolved) {
+        const fixedPlugins = (() => { try { return this.plugins?.fixed?.() || null; } catch { return null; } })();
+        if (fixedPlugins && fixedPlugins.length && version !== DEFAULT_VERSION) {
+          return fail(ERR.VERSION_UNSUPPORTED, `this server fixes every room's plugins (plugins/config.json rooms: fixed): ${resolved.error}`);
+        }
+        this.warnOnce(`[lobby] the default plugins (${defaults.join(', ')}) cannot be applied${version !== DEFAULT_VERSION ? ` to ${version}` : ''}: ${resolved.error}${resolved.detail ? ` (${resolved.detail})` : ''}`);
+      } else initial = resolved.content;
+    }
+    if (cur) this.removeMember(cur, session.playerId);
+    room.content = initial;
+    if (initial !== this.baseContent(version)) this.holdContent(initial);
+    room.ownerKey = key;
+    room.seats[0] = this.humanSeat(0, session, room);
+    room.hostId = session.playerId;
+    this.rooms.set(code, room);
+    session.roomCode = code;
+    session.notice = null;
+    session.pendingResult = null;
+    this.log.info(`[lobby] ${code} matchmaking created (${version}/${difficulty}, 1/${MAX_SEATS}) by ${session.name}`);
+    this.broadcastState(room);
+    return OK;
+  }
+
+  /** Start only when four connected real players have passed the room's content and consent gates. */
+  tryStartMatchmaking(room) {
+    if (!room || room.disposed || !room.matchmaking || room.match) return false;
+    const humans = room.activeHumans();
+    if (humans.length !== MAX_SEATS || humans.some((seat) => !seat.connected) || room.seats.some((seat) => seat?.isBot)) return false;
+    if (room.needsContent && humans.some((seat) => seat.content !== 'ready')) return false;
+    if (room.content?.trusted && humans.some((seat) => seat.consentCs !== room.content.cs)) return false;
+
+    const keys = new Set(humans.map((seat) => this.registry.byId(seat.playerId)?.limitKey).filter(Boolean));
+    const maxMatches = this.opts.maxMatchesPerAddr;
+    if (maxMatches > 0 && [...keys].some((key) => this.countRooms((running) => running !== room && !!running.match
+      && (running.matchKey === key || running.matchKeys?.has(key))) >= maxMatches)) {
+      if (!room.matchmakingLimitBlocked) this.log.warn(`[lobby] ${room.code} matchmaking is full but a network match limit is reached`);
+      room.matchmakingLimitBlocked = true;
+      return false;
+    }
+    room.matchmakingLimitBlocked = false;
+    const result = this.startMatch(room, null);
+    if (result?.error) this.log.warn(`[lobby] ${room.code} matchmaking start was refused: ${result.error}${result.detail ? ` (${result.detail})` : ''}`);
+    return !result?.error;
+  }
+
+  /** Retry full queues after a running match releases network match slots. */
+  startReadyMatchmakingRooms() {
+    for (const room of this.rooms.values()) if (room.matchmaking && !room.match) this.tryStartMatchmaking(room);
   }
 
   join(session, { code, testAck }) {
@@ -1008,6 +1167,7 @@ export class Lobby {
     session.pendingResult = null;
     if (!room.hostId) room.hostId = session.playerId;
     this.broadcastState(room);
+    if (room.matchmaking) this.tryStartMatchmaking(room);
     return OK;
   }
 
@@ -1069,6 +1229,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     this.dropReplay(room, session.playerId);
     const seat = room.seatOf(session.playerId);
     // a room with gameplay plugins: ready once the page has loaded and checked its content (header "Gameplay plugins")
@@ -1085,6 +1246,8 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
+    if (room.runKind === 'endless' && difficulty !== 'ABYSS') return fail(ERR.BAD_TARGET, 'endless difficulty is locked');
     // the room's version offers it (header "Official versions": 第二期上半 / 第一期 have no 终极)
     if (!this.offered(room.version, room.mode).includes(difficulty)) return fail(ERR.BAD_TARGET, 'not a mode of this version');
     this.dropReplay(room, session.playerId);
@@ -1105,6 +1268,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     if (room.mode === 'solo' || (on && (room.modded || room.version !== DEFAULT_VERSION))) return fail(ERR.BAD_TARGET);
     if (room.aiTakeoverEnabled !== on) {
       this.dropReplay(room, session.playerId);
@@ -1121,6 +1285,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     if (room.mode === 'solo') return fail(ERR.BAD_TARGET, 'solo rooms have no AI teammates');
     this.dropReplay(room, session.playerId);
     if (room.aiPicksLast !== on) {
@@ -1141,6 +1306,7 @@ export class Lobby {
     if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     if (room.mode !== 'solo' || !this.versionSoloTimed(room.version)) return fail(ERR.BAD_TARGET, 'this version\'s solo is not timed');
     this.dropReplay(room, session.playerId);
     const next = on === true;
@@ -1162,6 +1328,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     if (room.versionVote) return fail(ERR.VERSION_VOTE);
     const ids = [...new Set(plugins.map((p) => p.id))];
     /** @type {Record<string, Record<string, unknown>>} */
@@ -1170,6 +1337,14 @@ export class Lobby {
     const r = this.resolveContent(room, ids, settings);
     if ('error' in r) return r;
     let content = r.content;
+    if (room.custom && !ids.includes(CUSTOM_ROOM_PLUGIN_ID)) return fail(ERR.PLUGIN_BLOCKED, 'custom rooms keep the custom-room plugin enabled');
+    if (!room.custom && content?.roomOptions) return fail(ERR.PLUGIN_BLOCKED, 'room rules are available only in a custom room');
+    const targetCapacity = room.custom ? content?.roomOptions?.capacity : MAX_SEATS;
+    if (room.custom && !Number.isInteger(targetCapacity)) return fail(ERR.PLUGIN_BLOCKED, 'custom-room capacity is missing');
+    if (Number.isInteger(targetCapacity) && room.seats.slice(targetCapacity).some(Boolean)) {
+      return fail(ERR.BAD_TARGET, 'remove occupants from the seats above the selected capacity first');
+    }
+    if (room.runKind === 'endless' && content?.vanilla === false) return fail(ERR.PLUGIN_BLOCKED, 'gameplay plugins are disabled in ranked endless rooms');
     const before = room.content;
     const sameSet = (before?.vs ?? null) === (content?.vs ?? null) && (before?.cs ?? null) === (content?.cs ?? null);
     const marks = (c) => JSON.stringify((c?.plugins || []).map((p) => [p.id, !!p.auto, p.settings || null]));
@@ -1179,6 +1354,7 @@ export class Lobby {
     if (!sameSet) { room.pluginsChanged = null; room.pluginNoticeKeys = {}; }
     // the plugin mode chosen stays while the set still provides it (header "Gameplay plugins")
     if (before?.modeId && content?.modes?.some((m) => m.id === before.modeId)) content = Object.freeze({ ...content, modeId: before.modeId });
+    if (Number.isInteger(targetCapacity) && room.seats.length !== targetCapacity) room.seats = [...room.seats.slice(0, targetCapacity), ...new Array(Math.max(0, targetCapacity - room.seats.length)).fill(null)];
     room.content = content;
     if (!sameSet) {
       this.holdContent(content);
@@ -1220,8 +1396,9 @@ export class Lobby {
       return fail(ERR.INTERNAL);
     }
     if (!r || !r.ok) return fail(r && isErrCode(r.error) ? r.error : ERR.INTERNAL, r && typeof r.detail === 'string' ? r.detail.slice(0, 200) : undefined);
-    const { cs, vs, plugins: list, warnings, bytes, dataBytes, modes, kitted, trusted, execution, rules } = r.set;
+    const { cs, vs, plugins: list, warnings, bytes, dataBytes, modes, kitted, trusted, execution, rules, roomOptions } = r.set;
     const modded = isContentHash(cs) && cs !== this.vanilla.cs;
+    if (roomOptions && !room?.custom) return fail(ERR.PLUGIN_BLOCKED, 'room rules are available only in a custom room');
     // (roomSets refuses them itself; a room-sets object that does not know the option must not slip one through)
     if (modded && !gameplay) return fail(ERR.VERSION_UNSUPPORTED, 'gameplay plugins play the default version (act2autochess) only');
     const frozen = (a) => Object.freeze((Array.isArray(a) ? a : []).map((p) => Object.freeze({ ...p })));
@@ -1231,6 +1408,8 @@ export class Lobby {
       content: Object.freeze({
         cs: modded ? cs : base.cs,
         vanilla: !modded,
+        // plain-data content set (no scripts, no rules): the page simulates it locally, so 作战统计 stays available
+        ...(modded && r.set.dataOnly ? { dataOnly: true } : {}),
         ...(base.version ? { version: base.version } : {}),
         ...(vs ? { vs } : {}),
         plugins: frozen(list),
@@ -1240,6 +1419,7 @@ export class Lobby {
         bytes: Number(bytes) || 0,
         ...(modded ? { dataBytes: Number(dataBytes) || 0, modes: frozen(modes), ...(extra.length ? { kittedExtra: Object.freeze(extra) } : {}) } : {}),
         ...(rules ? { rules } : {}),
+        ...(roomOptions ? { roomOptions } : {}),
       }),
     };
   }
@@ -1266,6 +1446,8 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
+    if (room.runKind === 'endless') return fail(ERR.BAD_TARGET, 'endless mode rules are locked');
     if (room.versionVote) return fail(ERR.VERSION_VOTE);
     const official = DIFFICULTIES.find((d) => modeIdFor(room.mode, d) === modeId);
     let difficulty = room.difficulty;
@@ -1314,6 +1496,7 @@ export class Lobby {
     seat.content = state;
     if (state === 'failed') this.log.warn(`[lobby] ${room.code} ${session.name}: the room's content ${cs.slice(0, 8)} did not load or check on that page`);
     this.broadcastState(room);
+    if (room.matchmaking) this.tryStartMatchmaking(room);
     return OK;
   }
 
@@ -1330,6 +1513,7 @@ export class Lobby {
     if (changed) seat.content = null;
     if (!accept) { seat.ready = false; seat.content = null; }
     this.broadcastState(room);
+    if (room.matchmaking && accept) this.tryStartMatchmaking(room);
     return OK;
   }
 
@@ -1412,6 +1596,8 @@ export class Lobby {
     if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
+    if (room.runKind === 'endless') return fail(ERR.VERSION_UNSUPPORTED, 'endless mode is locked to the default version');
     if (!this.versionEnabled(version)) return fail(ERR.VERSION_UNKNOWN);
     if (!this.offered(version, room.mode).length) return fail(ERR.VERSION_UNSUPPORTED, `${version} has no ${room.mode} rooms`);
     if (room.modded && version !== DEFAULT_VERSION) return fail(ERR.VERSION_UNSUPPORTED, 'gameplay plugins play the default version (act2autochess) only');
@@ -1565,6 +1751,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     this.dropReplay(room, session.playerId);
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo rooms cannot have AI teammates');
     const idx = room.freeSeat();
@@ -1583,6 +1770,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     this.dropReplay(room, session.playerId);
     const target = room.seats[seat];
     if (!target || !target.isBot) return fail(ERR.BAD_TARGET, 'seat does not hold an AI');
@@ -1597,6 +1785,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     this.dropReplay(room, session.playerId);
     const target = room.seats[seat];
     if (!target || target.left) return fail(ERR.BAD_TARGET, 'seat holds no player');
@@ -1620,6 +1809,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matchmaking) return fail(ERR.MATCHMAKING);
     if (room.versionVote) return fail(ERR.VERSION_VOTE);
     const humans = room.activeHumans();
     if (room.content?.trusted && humans.some(s => s.consentCs !== room.content.cs)) return fail(ERR.PLUGIN_CONSENT);
@@ -1985,10 +2175,22 @@ export class Lobby {
         mode: room.mode,
         difficulty: room.difficulty,
         // a plugin mode the host chose (header "Gameplay plugins"), else the official mode of the difficulty
-        modeId: room.content?.modeId || modeIdFor(room.mode, room.difficulty),
+        modeId: room.runKind === 'endless'
+          ? modeIdFor(seats.length === 1 ? 'solo' : 'coop', 'ABYSS')
+          : room.content?.modeId || modeIdFor(room.mode, room.difficulty),
         // 「AI 队友最后选择」 (GitHub #338): fixed for the match
         aiPicksLast: room.mode !== 'solo' && room.aiPicksLast === true,
+        customRoom: room.custom === true,
+        untimedChoices: room.content?.roomOptions?.untimedChoices === true,
         seats,
+        ...(room.runKind === 'endless' ? {
+          runKind: 'endless',
+          endlessRunId: randomUUID(),
+          clientCombat: false,
+          verify: 'all',
+          onEndlessCheckpoint: (record) => this.endlessLeaderboard.checkpoint(record),
+          onEndlessFinalize: (record) => this.endlessLeaderboard.finalize(record),
+        } : {}),
         // the spectator seats (header): watched like eliminated players, never players
         spectators: room.spectators.map((s) => s.playerId),
         // the room's host: the current executor of a delegated bot layout rehearsal (DESIGN §14; setHost follows a
@@ -2031,7 +2233,11 @@ export class Lobby {
       room.match = match;
       room.matchCtx = ctx;
       room.matchKey = key;
+      room.matchKeys = room.matchmaking
+        ? new Set(room.activeHumans().map((seat) => this.registry.byId(seat.playerId)?.limitKey).filter(Boolean))
+        : new Set(key ? [key] : []);
       room.replay = null;
+      room.matchRound = null;
       room.matchCount++;
       this.log.info(`[lobby] ${room.code} match #${room.matchCount} starting (${room.mode}/${room.difficulty}, ${seats.length} seats, seed ${seed}${room.test ? ', test' : ''}${modded ? `, content ${room.content.cs.slice(0, 8)}${match.hosted ? ' in its match host' : ''}` : ''}${versioned ? `, version ${room.version}${match.hosted ? ' in its match host' : ''}` : ''})`);
       this.broadcastState(room);
@@ -2040,7 +2246,7 @@ export class Lobby {
       this.log.error(`[lobby] ${room.code} match failed to start`, e);
       if (room.matchCtx === ctx) {
         resetAiTakeover(room);
-        room.match = null; room.matchCtx = null; room.matchKey = null;
+        room.match = null; room.matchCtx = null; room.matchKey = null; room.matchKeys.clear();
       }
       this.disposeMatchCtx(ctx);
       this.broadcastState(room);
@@ -2059,6 +2265,8 @@ export class Lobby {
     room.match = null;
     room.matchCtx = null;
     room.matchKey = null;
+    room.matchKeys.clear();
+    room.matchmaking = false;
     room.replay = this.buildReplay(room, ctx);
     setImmediate(() => this.disposeMatchCtx(ctx));
     // a match of gameplay plugins, or of an official version, whose match host stopped (header "Gameplay plugins",
@@ -2081,6 +2289,7 @@ export class Lobby {
       // its plugins changed on disk during the match: the host can apply them again now
       if (room.pluginsChanged) this.tellPluginsChanged(room);
     }
+    this.startReadyMatchmakingRooms();
   }
 
   /** Match unicast; m.result frames are also kept for the replay. */
@@ -2094,6 +2303,8 @@ export class Lobby {
 
   /** Match broadcast; the latest m.public and a broadcast m.result are also kept for the replay. */
   matchBroadcast(room, ctx, msg, encoded = null) {
+    // a hosted (plugin/version) match exposes no round to the lobby: keep the last public frame's round for the admin page
+    if (msg.t === 'm.public' && Number.isSafeInteger(msg.round)) room.matchRound = msg.round;
     if (msg.t === 'm.public' && reconcileAiTakeover(this, room)) this.broadcastState(room);
     const data = this.broadcastRoom(room, msg, encoded);
     if (data == null) return;
@@ -2435,6 +2646,7 @@ export class Lobby {
     room.match = null;
     room.matchCtx = null;
     room.matchKey = null;
+    room.matchKeys.clear();
     room.replay = null;
     for (const s of room.seats) {
       if (!s || s.isBot) continue;

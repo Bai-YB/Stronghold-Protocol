@@ -15,7 +15,8 @@ export class PlayerRound {
     this.pendingLayerGains = null; // settled (or lapsed) at the last SETTLE
     if (r > 1) this.shop.upgradePrice = Math.max(0, this.shop.upgradePrice - 1);
     // onIncome handlers may rewrite ev.income / ev.pending (e.g. 老鲤 withholds R1–R2 income until R3)
-    const ev = { round: r, income: this.gd.income(r), pending: this.pendingFunds };
+    const growth = this.m.endless?.active ? this.m.endlessGrowthForCurrent() : null;
+    const ev = { round: r, income: growth ? growth.income + (this.m.endless.protocols[this.playerId] === 'supply' ? 3 : 0) : this.gd.income(r), pending: this.pendingFunds };
     this.pendingFunds = 0;
     this.m.dispatch(this, 'onIncome', ev);
     const nonNeg = (v) => (Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
@@ -120,7 +121,7 @@ export class PlayerRound {
    * in-battle gains of this round's finished normal battle (bondsMeta.bondsWithGains). The 联防 field fights with them too
    * (battleInput `reached`); no other rule reads them.
    */
-  bondsView() { return bondsWithGains(this.bonds, this.pendingLayerGains); }
+  bondsView() { return bondsWithGains(this.bonds, this.pendingLayerGains, this.m.endless?.active ? null : undefined); }
 
   /**
    * `reached`: the bonds carry the layers this round's own combat reached (bondsView: the pending in-battle gains, capped

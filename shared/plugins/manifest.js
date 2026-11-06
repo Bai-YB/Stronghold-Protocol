@@ -52,7 +52,7 @@
 // PLUGIN_LIMITS: 8 MB per JSON file, nesting ≤ 64, numbers finite within ±1e9, 200 MB and 5000 files per plugin
 // [ASSUMED — every limit].
 
-import { APP_VERSION, PLUGIN_API } from '../constants.js';
+import { APP_VERSION, MAX_ROOM_SEATS, PLUGIN_API } from '../constants.js';
 import { SOURCE_LANG, canonicalLang, isLangCode, languageName, langFields } from '../i18nPacks.js';
 import { issueList } from './errors.js';
 import { THEME_VAR_LIMIT, readThemeDeclaration } from './theme.js';
@@ -183,7 +183,7 @@ const SETTING_TYPES = ['boolean', 'integer', 'number', 'enum'];
 /** Top-level fields of manifest 2 (anything else is warned about and ignored). */
 const V2_FIELDS = new Set(['$schema', 'manifest', 'id', 'name', 'englishName', 'description', 'version', 'app', 'api', 'class', 'scope',
   'authors', 'credits', 'license', 'homepage', 'sourceLang', 'requires', 'optional', 'conflicts', 'loadAfter', 'loadBefore', 'priority',
-  'settings', 'permissions', 'overrides', 'rules', 'entry', 'slots', 'notices', 'files', 'lang', 'base', 'fallback', 'complete', 'machineTranslated', 'numberUnits', ...Object.keys(PARTS)]);
+  'settings', 'room', 'permissions', 'overrides', 'rules', 'entry', 'slots', 'notices', 'files', 'lang', 'base', 'fallback', 'complete', 'machineTranslated', 'numberUnits', ...Object.keys(PARTS)]);
 /** Those fields, sorted, for the frozen API table (docs/PLUGIN-API.md). */
 export const MANIFEST_FIELDS = Object.freeze([...V2_FIELDS].sort());
 /** Fields only a lang plugin has. */
@@ -312,7 +312,7 @@ export function appVersionMatches(range, version = APP_VERSION) {
 function v2Defaults(cls) {
   return {
     names: {}, description: {}, api: null, scope: [...(PLUGIN_CLASSES[cls]?.defaultScope || [])], homepage: '', sourceLang: SOURCE_LANG,
-    requires: {}, optional: {}, conflicts: {}, loadAfter: [], loadBefore: [], priority: 0, settings: {}, permissions: [], parts: {}, entry: {},
+    requires: {}, optional: {}, conflicts: {}, loadAfter: [], loadBefore: [], priority: 0, settings: {}, room: undefined, permissions: [], parts: {}, entry: {},
     slots: [],
   };
 }
@@ -672,6 +672,30 @@ export function readPluginManifest(raw, ctx) {
     }
   }
 
+  /** Room-level options are data-only capabilities, tied to settings declared by this plugin. */
+  let room;
+  if (m.room !== undefined) {
+    const badRoom = (text, field = []) => list.problem('PLUGIN_SETTING', text, { at: ['room', ...field] });
+    if (cls !== 'content') badRoom('"room" is available only to a content plugin');
+    if (!scope.includes('room')) badRoom('"room" needs scope "room"');
+    if (!isObj(m.room) || Object.keys(m.room).length === 0) badRoom('"room" must name capacity and/or untimedChoices settings');
+    else {
+      const parsed = {};
+      for (const key of Object.keys(m.room)) {
+        if (!['capacity', 'untimedChoices'].includes(key)) { badRoom(`unknown room option ${short(key)}`, [key]); continue; }
+        const setting = m.room[key];
+        if (typeof setting !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(setting)) { badRoom(`"room.${key}" must reference a setting key`, [key]); continue; }
+        const def = settings[setting];
+        if (!def) { badRoom(`"room.${key}" references missing setting "${setting}"`, [key]); continue; }
+        if (key === 'capacity') {
+          if (def.type !== 'integer' || def.min < 2 || def.max > MAX_ROOM_SEATS) { badRoom(`"room.capacity" must reference an integer setting bounded by 2–${MAX_ROOM_SEATS}`, [key]); continue; }
+        } else if (def.type !== 'boolean') { badRoom('"room.untimedChoices" must reference a boolean setting', [key]); continue; }
+        parsed[key] = setting;
+      }
+      if (Object.keys(parsed).length) room = parsed;
+    }
+  }
+
   // the parts and the entry points: each must belong to the class
   /** @type {Record<string, PluginPart>} */
   const parts = {};
@@ -748,7 +772,7 @@ export function readPluginManifest(raw, ctx) {
   }
   // A declared switch is gameplay. An absent or empty rules object is not, so a plugin that names none stays empty.
   const rules = readDeclaredRules(m.rules, list, cls);
-  if (!isLang && !Object.keys(parts).length && !Object.keys(entry).length && !notices && !rules) list.warning('PLUGIN_EMPTY', `carries nothing a ${cls} plugin is made of`, { class: cls });
+  if (!isLang && !Object.keys(parts).length && !Object.keys(entry).length && !notices && !rules && !room) list.warning('PLUGIN_EMPTY', `carries nothing a ${cls} plugin is made of`, { class: cls });
 
   const overrides = m.overrides ?? [];
   if (m.overrides !== undefined && (!['script','trusted'].includes(cls) || !Array.isArray(overrides) || overrides.length > 200 || new Set(overrides).size !== overrides.length || overrides.some(x => typeof x !== 'string' || !/^[A-Za-z0-9_:-]{1,128}$/.test(x)))) list.problem('PLUGIN_SCRIPT_OVERRIDE', 'overrides must list official kit ids', {at:['overrides']});
@@ -757,7 +781,7 @@ export function readPluginManifest(raw, ctx) {
   const out = {
     manifest: 2, id, class: cls, type: kind.packType, name, englishName, names, description, version, app: range, compatible, api, scope,
     authors: authorsOf(m.authors), credits: str(m.credits, 500), license: str(m.license, 100), homepage, sourceLang: sourceLang || SOURCE_LANG,
-    requires, optional, conflicts, loadAfter, loadBefore, priority, settings, permissions, parts, entry, slots, files: {},
+    requires, optional, conflicts, loadAfter, loadBefore, priority, settings, ...(room ? { room } : {}), permissions, parts, entry, slots, files: {},
     ...(m.overrides !== undefined ? { overrides } : {}),
     ...(parts.theme?.themeVars ? { themeVars: parts.theme.themeVars } : {}),
     ...(notices ? { notices } : {}),
@@ -914,6 +938,7 @@ export function pluginIndexEntry(p) {
   for (const k of ['loadAfter', 'loadBefore']) if (m[k].length) e[k] = [...m[k]];
   if (m.priority) e.priority = m.priority;
   if (Object.keys(m.settings).length) e.settings = JSON.parse(JSON.stringify(m.settings));
+  if (m.room) e.room = { ...m.room };
   if (m.permissions.length) e.permissions = [...m.permissions];
   if (Number.isFinite(p.bytes)) e.bytes = p.bytes;
   if (Number.isFinite(p.count)) e.files = p.count;

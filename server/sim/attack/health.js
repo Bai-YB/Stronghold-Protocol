@@ -16,6 +16,7 @@ import { mitigate } from './calculation.js';
  * 'element') removes no HP and is never checked. Deterministic (Math.ceil of the same double on every engine).
  */
 export function leaderHitCancelled(battle, target, amount) {
+  if (battle.flags?.endlessDisableBossHitLimit === true) return false;
   if (!(BOSS_HIT_LIMIT > 0) || !target || !target.isBoss || (battle.kind !== 'boss' && battle.kind !== 'hidden')) return false;
   if (!(Math.ceil(amount) >= BOSS_HIT_LIMIT)) return false;
   battle.fx('hitCap', { x: target.x, y: target.y, id: target.id, n: Math.ceil(amount) });

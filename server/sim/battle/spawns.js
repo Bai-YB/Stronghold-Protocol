@@ -29,6 +29,7 @@ export class BattleSpawns {
       const p = {
         time: Math.max(0, fin(s.time, 0)) + i * interval, enemyKey: s.enemyKey, routeIndex: s.routeIndex ?? 0, route: s.route ?? null,
         mods: s.mods ?? null, sourcePlayerId: s.sourcePlayerId ?? null, bounty: s.bounty ?? null, tag: s.tag ?? null,
+        bossPoolKey: s.bossPoolKey ?? null,
         ownerPlayerId: s.ownerPlayerId ?? null, pos: s.pos ?? null, seq: ++this._spawnSeq, countInTotal: s.countInTotal,
       };
       p.counted = p.countInTotal ?? (!(def && def.notCountInTotal) && p.tag !== 'boss' && p.tag !== 'part');
@@ -52,6 +53,13 @@ export class BattleSpawns {
     const now = this.time + 1e-9;
     while (this._pending.length && this._pending[0].time <= now) { // loop-cap: pending spawn queue
       const p = this._pending.shift();
+      if (this.flags.endlessLiveEnemyCap > 0 && this.aliveEnemies().length >= this.flags.endlessLiveEnemyCap) {
+        p.time = this.time + 0.25;
+        let at = this._pending.findIndex((x) => x.time > p.time || (x.time === p.time && x.seq > p.seq));
+        if (at < 0) at = this._pending.length;
+        this._pending.splice(at, 0, p);
+        break; // defer the due batch together until the live population drops
+      }
       this._safe(() => this.spawnEnemy(p.enemyKey, { ...p, _precounted: p.precounted, _scheduled: true }), 'spawnEnemy');
     }
   }
@@ -111,12 +119,14 @@ export class BattleSpawns {
     // multipliers: finite and ≥ 0 (hp > 0), anything else counts as 1
     const mm = (v, pos = false) => { const n = fin(v, 1); return n < 0 || (pos && n <= 0) ? 1 : n; };
     const m0 = opts.mods || {};
-    const m = { hpMul: mm(m0.hpMul, true), atkMul: mm(m0.atkMul), defMul: mm(m0.defMul), resMul: mm(m0.resMul), speedMul: mm(m0.speedMul) };
+    const m = { hpMul: mm(m0.hpMul, true), atkMul: mm(m0.atkMul), defMul: mm(m0.defMul), resMul: mm(m0.resMul), speedMul: mm(m0.speedMul), resAdd: Number(m0.resAdd) || 0 };
     const e = new Unit({
       id: ++this._idSeq, side: 'enemy', kind: 'enemy', def, defId: def.key ?? enemyKey, name: def.name,
       x: start[1], y: start[0], motion: def.motion,
       base: {
-        maxHp: def.maxHp * (m.hpMul ?? 1), atk: def.atk * (m.atkMul ?? 1), def: def.def * (m.defMul ?? 1), res: def.res * (m.resMul ?? 1),
+        maxHp: def.maxHp * (m.hpMul ?? 1), atk: def.atk * (m.atkMul ?? 1), def: def.def * (m.defMul ?? 1),
+        res: Math.max(0, def.res * (m.resMul ?? 1) >= 80 ? def.res * (m.resMul ?? 1)
+          : Math.min(80, def.res * (m.resMul ?? 1) + m.resAdd)),
         aspd: def.aspd, bat: def.bat, blockCnt: 0, moveSpeed: def.moveSpeed * (m.speedMul ?? 1), spRecovery: 0,
         tauntLevel: def.tauntLevel, massLevel: def.massLevel, hpRecoveryPerSec: def.hpRecoveryPerSec, rangeRadius: def.rangeRadius,
       },
@@ -171,8 +181,14 @@ export class BattleSpawns {
     }
     if (e.tag === 'boss') {
       e.isBoss = true;
-      if (this.sharedBoss) { e.bossPool = this.sharedBoss; this._syncBossHp(e); }
+      if (this.sharedBoss) {
+        const poolKey = opts.bossPoolKey || this.bossPoolByEnemy[def.key] || this.bossPoolByEnemy[enemyKey];
+        e.bossPool = (this.bossPools && poolKey && this.bossPools[poolKey]) || this.sharedBoss;
+        this._syncBossHp(e);
+      }
     }
+    if (this.flags.endlessControlResist > 0) this.addBuff(e, { key: 'endless:control-resist', status: 'resist',
+      duration: Infinity, data: { value: this.flags.endlessControlResist } });
     e.hp = e.bossPool ? e.hp : e.s.maxHp;
     this.units.push(e);
     this.enemies.push(e);

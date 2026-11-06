@@ -1,0 +1,17 @@
+{
+  "lock": 1,
+  "id": "custom-room",
+  "version": "1.1.0",
+  "generator": "tools/plugin.mjs pack",
+  "files": {
+    "README.md": {
+      "sha256": "22399ca531453e6b4cab2cb0a383dee6b9756a0438f479390928ef1d05f9c0d9",
+      "bytes": 1392
+    },
+    "plugin.json": {
+      "sha256": "6c47e3b9a4b0020f8e1d7759eee4d348e6ee25c5a297f4eb43d441229ba86371",
+      "bytes": 972
+    }
+  },
+  "spine": {}
+}

@@ -145,10 +145,30 @@ classes and the content sets running at once — §11 and `docs/DEPLOY.md`.
 | `requires`, `optional`, `conflicts` | `{ "<plugin id>": "<version range>" }`; a missing or out-of-range requirement is a warning of the registry now, a refusal when rooms choose plugins |
 | `loadAfter`, `loadBefore`, `priority` | ordering hints (lists of ids; an integer within ±1000, default 0) |
 | `settings` | ≤ 32 settings: `boolean`, `integer` / `number` (`min` and `max` required, `step`), `enum` (`options`) — no free text; `default` (else `false`, `min`, the first option), `label` |
+| `room` | optional room rules for a `content` plugin: `capacity` and `untimedChoices` each name a setting declared above |
 | `permissions` | what the plugin does (§4); every part needs one, every permission must fit the class |
 | parts | `assets`, `theme` (cosmetic+) · `data`, `operators`, `enemies`, `modes`, `stages`, `dsl`, `offers` (content+) — a path, a list of paths or (`assets`, `theme`) the object inline · `i18n` `{ "<lang>": path }` (content+) |
 | `entry` | `{ "sim", "meta" }` (script, `.js`) · `{ "client" }` (ui, `.html`) · `{ "server" }` (trusted, `.js`) |
 | `lang`, `files` … | the `lang` class only: manifest 1's language fields and `files: { ui, data }` (§7) |
+
+This local compatibility extension lets a content plugin declare `"room": { "capacity": "seatCapacity", "untimedChoices": "untimedChoices" }`.
+`capacity` must refer to an integer setting from 2 to 20; `untimedChoices` must refer to a boolean. These rules are
+available only from the separate **自定义对局** lobby action. The server enables and keeps the `custom-room` plugin in
+those rooms; ordinary **创建同盟** remains four seats with the official timers. Unlimited selection affects only
+strategy and 机变 drafts. Custom rooms currently require the default game version because gameplay plugins are gated
+to that version; with `rooms: "fixed"`, the fixed set must include this plugin.
+
+Custom-room balance uses the number of occupied player seats when the match starts (AI seats count; empty room seats do
+not). The shared operator stock scales linearly from the official four-seat co-op stock: 4 players keep the official 2×
+single-player stock, 8 players get 4×, and 20 players get 10×. Each player's private 自选 stock keeps its official
+per-player size, so adding a player adds that player's stock once. The shared leader pool keeps the official
+`bloodPoint × alive players` rule and extends its four-player cap to the custom room's starting player count; only
+players still alive when a boss fight begins count.
+
+For the larger-room mod, a custom match that starts with 5–9 occupied seats runs at most one 联防 pair; 10 or more
+occupied seats run at most two pairs. This count uses occupied seats at match start, not the room's configured capacity.
+Only these 5+ seat custom matches show the full roster during 联防, with each helper pair in an expandable queue group;
+ordinary four-seat **创建同盟** keeps its original helper selection and roster display.
 
 A **problem** keeps a plugin out (unlisted; the start log and `tools/plugin.mjs` say why); a **warning** does not.
 Unknown fields are warnings. The asset overlay of a cosmetic plugin is §9; the inner formats of the data parts — data
@@ -566,7 +586,7 @@ roster exclusion. The default-yes vanilla extraction prompt does not grant art c
 before full extraction, and direct full `extract.py` runs require `--plugin-art` (or explicit `--only plugin-art`).
 Registry checks and packing keep `assets.add`/`assets.override` classification against the original `data/assets.json`;
 references use the merged manifest. One broken sprite is logged without skipping later sprites in its bundle.
-This adds no plugin fields and changes no gameplay/content hashes. See [ASSETS.md](ASSETS.md#official-operator-art-referenced-by-plugins-031)
+This adds no plugin fields and changes no gameplay/content hashes. See [ASSETS.md](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/ASSETS.md#official-operator-art-referenced-by-plugins-031)
 for paths, scratch-only extraction and limits (no extra skins, illustrations or voices).
 
 A cosmetic plugin, or a content plugin's own assets, can put this inside its `assets` object/file:
@@ -586,6 +606,12 @@ dependency [ASSUMED]; official units cannot be overwritten. Every runtime unit/s
 The browser rechecks unit ownership and prefab bodies before preparation and merge; invalid bundles contribute
 nothing. The loader pins the provider/dependency owner list with the payload; binding keys cannot grant ownership.
 
+For packages authored on **0.3.1**, the cosmetic overlay also accepts `bindOperators`, `bindSkins`, `bindEnemies`, and
+`bindEvents`. These tables retain their exact operator/skin/enemy ids, per-slot phase overrides, tint/scale/alpha, and
+field-event behavior; a skin replaces only the phases it declares and inherits the operator's remaining phases.
+Legacy flipbooks may specify `rows` and `start` to address a sub-grid in a shared sprite sheet. This compatibility path
+does not change simulation/content data and remains personal to the player who enables the cosmetic plugin.
+
 Flipbooks use Pixi sprites on **both boards**, obey 官方特效 (off hides them), and advance in battle seconds
 [ASSUMED]. Frames read left-to-right, top-to-bottom, skipping unused cells; image dimensions must divide the grid.
 Defaults [ASSUMED]: anchor `[0.5,0.5]`, scale `1` (one tile wide), blend `normal`, loop `false`. Skill loops stop on
@@ -598,7 +624,7 @@ events retain their normal handling. Owner/target death cancels pending arrival 
 
 Compiled effects add `"index":"fx/index.json"`. This version-3 `fx-index` fragment contains `units`, `skills`,
 `prefabs` and `textures: {"sheet":{"file":"fx/sheet.png"}}`. Prefabs are version-1 `fx-prefab` JSON under `fx/`,
-following [the extracted format](design/vfx-format.md), with this validated subset:
+following [the extracted format](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/design/vfx-format.md), with this validated subset:
 
 - Units: `kind:"char"`, skills, modes, optional startEffect/deadEffect. Skill copies match index.skills.
 - Skills: uses (`keys`, role, from, optional ability/oneshot), optional mode/rootClass. Roles: start/loop/end/hit/cast.
@@ -1008,8 +1034,8 @@ No plugin scripts run to open, draw, refresh or apply a window. Old API 1 manife
 The manifest schema checks JSON paths, allowed classes, API 2, the required permission and its corresponding part;
 the shipped example is validated against both the schema and the manifest reader.
 
-A complete, art-free example is [offers-demo](examples/offers-demo/plugin.json), with
-[its window](examples/offers-demo/offers.json) and [cards](examples/offers-demo/cards.json).
+A complete, art-free example is [offers-demo](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/examples/offers-demo/plugin.json), with
+[its window](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/examples/offers-demo/offers.json) and [cards](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/examples/offers-demo/cards.json).
 Copy that directory to `plugins/offers-demo`, check it, then enable it in the room's plugin panel.
 
 ```json
@@ -1307,7 +1333,7 @@ a Worker escape. Node 22 permissions do not restrict network and are not a malic
 escape can probe the server's network or read its allowed install tree and targets of links inside it.
 Do not put links pointing outside inside the installation root; use a network namespace/container to restrict network. Prefer a low-privilege account/container
 with outbound-network and OS resource limits. Chrome regression coverage includes CSP and sandbox behavior;
-Firefox and Safari have not had dedicated sandbox verification. See [DESIGN §32.11](history/0.3.0.md#3211-p3b--worker-simulation-ses-and-csp)
+Firefox and Safari have not had dedicated sandbox verification. See [DESIGN §32.11](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/history/0.3.0.md#3211-p3b--worker-simulation-ses-and-csp)
 and [deployment](DEPLOY.md).
 
 

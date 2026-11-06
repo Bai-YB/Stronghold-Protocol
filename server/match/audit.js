@@ -301,7 +301,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const ids = m.order.map((p) => p.playerId).sort();
       if (JSON.stringify(d.order.slice().sort()) !== JSON.stringify(ids)) fail(`draft order ${d.order} != seats ${ids}`);
       // one countdown (user playtest #4 item 4): the step's deadline IS the current turn's, BAND_TURN_SECONDS long
-      if (m.soloUntimed) { if (m.deadline || d.turnDeadline) fail('untimed band draft is timed'); } else {
+      if (m.soloUntimed || m.untimedChoices) { if (m.deadline || d.turnDeadline) fail('untimed band draft is timed'); } else {
         if (m.deadline !== d.turnDeadline) fail(`BAND_DRAFT: deadline ${m.deadline} is not the turn's ${d.turnDeadline}`);
         expectDeadline(BAND_TURN_SECONDS, 'BAND_DRAFT turn');
       }
@@ -326,7 +326,8 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     check('round start phase', () => {
       if (m.phase !== PHASE.ROUND_START) return;
       expectDeadline(2, 'ROUND_START', { silentSolo: true });
-      const isBoss = rr === gd.bossRound || rr === gd.hiddenRound;
+      const endlessBoss = m.endlessActive?.() && Number.isInteger(m.endless?.round) && m.endless.round > 0 && m.endless.round % 7 === 0;
+      const isBoss = endlessBoss || rr === gd.bossRound || rr === gd.hiddenRound;
       if (isBoss ? !m.bossWaves : !m.wave) fail('round without its wave');
     });
     return res;
@@ -337,7 +338,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       if (m.phase !== PHASE.SP_DRAFT || !m.sp) return;
       const s = m.sp;
       if (s.idx >= s.order.length) return;
-      if (m.soloUntimed) { if (m.deadline) fail('untimed 机变 is timed'); } else expectDeadline(s.idx === 0 ? gd.timer('spFirst') : gd.timer('spTurn'), `SP_DRAFT turn ${s.idx}`);
+      if (m.soloUntimed || m.untimedChoices) { if (m.deadline) fail('untimed 机变 is timed'); } else expectDeadline(s.idx === 0 ? gd.timer('spFirst') : gd.timer('spTurn'), `SP_DRAFT turn ${s.idx}`);
     });
     return res;
   });
@@ -348,6 +349,22 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const want = m.isSolo ? 3 : 6;
       if (s.cards.length > want) fail(`${s.cards.length} 机变 cards (max ${want})`);
       if (s.order.length !== alive.length) fail(`机变 order ${s.order.length} for ${alive.length} alive`);
+      if (s.grouped) {
+        const groupedIds = s.groups.flatMap((g) => g.members.map((p) => p.playerId));
+        if (groupedIds.length !== alive.length || new Set(groupedIds).size !== groupedIds.length
+          || JSON.stringify(groupedIds.slice().sort()) !== JSON.stringify(alive.slice().sort())) fail('custom-room 机变 groups do not partition alive players');
+        for (const pid of alive) {
+          const idx = s.picks[pid];
+          const groupId = s.groupByPlayer[pid];
+          if (idx == null) fail(`${pid} ends 机变 without a card`);
+          else if (s.groupTaken[groupId]?.[idx] !== pid) fail(`${pid} picked card ${idx} outside its group draft`);
+        }
+        for (const [groupId, taken] of Object.entries(s.groupTaken)) {
+          const holders = Object.values(taken);
+          if (new Set(holders).size !== holders.length) fail(`custom-room group ${groupId} took a card more than once`);
+        }
+        return;
+      }
       for (const pid of alive) {
         const idx = s.picks[pid];
         if (idx == null) fail(`${pid} ends 机变 without a card`);
@@ -388,8 +405,8 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const counted = (pid) => ((m.lastResults.get(pid) || {}).leaked || []).filter((l) => l && l.counted !== false).length;
       const alive = m.alivePlayers();
       const leak = alive.some((p) => counted(p.playerId) > 0);
-      const perfect = alive.some((p) => counted(p.playerId) === 0);
-      expectUnite = { round: m.round, expect: !m.isSolo && leak && perfect };
+      const perfect = alive.filter((p) => counted(p.playerId) === 0 && (m.lastResults.get(p.playerId) || {}).perfect !== false);
+      expectUnite = { round: m.round, expect: !m.isSolo && leak && perfect.length >= 1 };
     });
     return orig();
   });
@@ -399,9 +416,26 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const counted = (pid) => ((res.get(pid) || {}).leaked || []).filter((l) => l && l.counted !== false).length;
       const alive = m.alivePlayers();
       const leakers = alive.filter((p) => counted(p.playerId) > 0).map((p) => p.playerId).sort();
-      const perfect = alive.filter((p) => counted(p.playerId) === 0);
-      const helpers = helperOrder(m, perfect, res).map((p) => p.playerId);
-      if (helpers.length > gd.unite.maxHelpers) fail(`${helpers.length} 联防 helpers (max ${gd.unite.maxHelpers})`);
+      const perfect = alive.filter((p) => counted(p.playerId) === 0 && (res.get(p.playerId) || {}).perfect !== false);
+      const grouped = m.customRoom && Array.isArray(plan.groups);
+      const helpers = grouped
+        ? plan.groups.flatMap((g) => (g.helpers || []).map((p) => p.playerId))
+        : helperOrder(m, perfect, res).map((p) => p.playerId);
+      if (grouped) {
+        const groupHelpers = plan.groups.flatMap((g) => g.helpers || []);
+        const groupLeaked = plan.groups.flatMap((g) => g.leaked || []);
+        const expectedGroupCount = Math.ceil(perfect.length / 2);
+        if (groupHelpers.length !== perfect.length) fail(`自定义联防 helpers ${groupHelpers.length} != ${perfect.length} (all perfect players assigned)`);
+        if (plan.groups.length !== expectedGroupCount) fail(`自定义联防 groups ${plan.groups.length} != ${expectedGroupCount}`);
+        if (new Set(helpers).size !== helpers.length) fail('a custom-room perfect player is assigned to multiple 联防 groups');
+        if (plan.groups.some((g) => !Array.isArray(g.helpers) || g.helpers.length < 1 || g.helpers.length > 2)) fail('a custom-room 联防 group must have one or two helpers');
+        if (helpers.some((pid) => !perfect.some((p) => p.playerId === pid))) fail('a custom-room 联防 helper is not a perfect player');
+        const validLeaked = plan.leaked.map((l) => `${l.sourcePlayerId}:${l.enemyKey}`).sort();
+        const groupedLeaked = groupLeaked.map((l) => `${l.sourcePlayerId}:${l.enemyKey}`).sort();
+        if (JSON.stringify(validLeaked) !== JSON.stringify(groupedLeaked)) fail('custom-room 联防 groups do not cover the leaked enemy pool exactly once');
+        const sizes = plan.groups.map((g) => g.leaked.length);
+        if (sizes.length && Math.max(...sizes) - Math.min(...sizes) > 1) fail('custom-room 联防 leaked enemies are not split evenly');
+      } else if (helpers.length > gd.unite.maxHelpers) fail(`${helpers.length} 联防 helpers (max ${gd.unite.maxHelpers})`);
       if (plan.helpers.some((p) => !p.alive || p.left)) fail(`联防 helper eliminated / departed: ${plan.helpers.filter((p) => !p.alive || p.left).map((p) => p.playerId)}`);
       if (m.isSolo) fail('联防 in solo');
       if (JSON.stringify(plan.leakers.map((p) => p.playerId).sort()) !== JSON.stringify(leakers)) fail(`联防 leakers ${plan.leakers.map((p) => p.playerId)} != ${leakers}`);
@@ -486,7 +520,9 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
         const t = p.title && cfg.find((x) => x.id === p.title.id);
         if (t && t.onlyOnWin && !r.victory) fail(`${p.playerId}: win-only title ${t.id} on a defeat`);
         const ps = m.players.get(p.playerId);
-        const want = !ps.alive && ps.eliminatedRound != null ? Math.max(0, ps.eliminatedRound - 1) : r.victory ? gd.bossRound + (r.hiddenCleared ? 1 : 0) : Math.max(0, Math.min(m.round, gd.bossRound) - 1);
+        const want = m.runKind === 'endless' ? r.roundsPassed
+          : !ps.alive && ps.eliminatedRound != null ? Math.max(0, ps.eliminatedRound - 1)
+            : r.victory ? gd.bossRound + (r.hiddenCleared ? 1 : 0) : Math.max(0, Math.min(m.round, gd.bossRound) - 1);
         if (p.roundsPassed !== want) fail(`${p.playerId}: roundsPassed ${p.roundsPassed}, expected ${want}`);
       }
       if (r.hiddenReached && !m.hiddenReached) fail('hiddenReached mismatch');

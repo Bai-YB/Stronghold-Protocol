@@ -785,7 +785,7 @@ Kazdel/Rhodes 同样不能仅靠数据恢复自定义行为。结城理原包未
 没有本机客户端、没有对应资源或跳过提取时，插件自带美术照常显示，否则仍可能缺图或使用通用棋子标记。
 提取后重启服务并刷新页面。不会下载官方美术，也不额外提取时装、完整立绘、语音或改动玩法数据。
 [ASSUMED] 已有安装素材的同名槽位优先，部分提取保留先前成功的槽位；检测要求基础图片与正反面模型，
-缓存官方表声明有精二时也检查精二图片。文件只写入忽略的本地美术目录，具体路径和隔离提取见 [ASSETS.md](ASSETS.md#official-operator-art-referenced-by-plugins-031)。
+缓存官方表声明有精二时也检查精二图片。文件只写入忽略的本地美术目录，具体路径和隔离提取见 [ASSETS.md](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/ASSETS.md#official-operator-art-referenced-by-plugins-031)。
 
 借用官方特效，在干员 JSON 顶层写 `"fx":{"unit":"char_112_siege","skills":{"0":"skchr_siege_3"}}`。
 这里的 `0` 是本插件技能的第一个槽位，右边是要借用的官方技能。它只决定画面，不继承数值、技能逻辑或模型。
@@ -803,6 +803,9 @@ Kazdel/Rhodes 同样不能仅靠数据恢复自定义行为。结城理原包未
 ```
 
 把 `my_pack` 换成自己的插件命名空间。每个技能可绑定 skillStart、skillLoop、skillEnd、attack、hit、projectile。
+0.3.1 制作的外观包也继续支持 `bindOperators`、`bindSkins`、`bindEnemies`、`bindEvents`。这些旧字段保留精确的
+干员／皮肤／敌人 ID、每个技能槽的阶段覆盖、色调／缩放／透明度和全场事件；皮肤只覆盖声明的阶段，其余阶段继承干员绑定。
+旧序列帧还可以用 `rows`、`start` 指向共用图集的子区域。兼容层只影响启用插件的玩家画面，不改模拟或内容数据。
 [ASSUMED] skillLoop 跟随干员直到技能结束或死亡；弹道按通用弹道速度飞向目标，抵达时播 hit。
 [ASSUMED] 远程伤害事件没有来源 id，因此预估抵达效果不抢占目标的伤害火花；只有已识别来源且实际播出 hit 时才替代本次火花。
 射手或目标死亡会取消待播命中，其他攻击者和躯壳计次伤害继续正常显示。
@@ -874,10 +877,10 @@ JSON 文件里写 `{ "dsl": 1, "meta": { "on": [{ "when": "gain", "do": [{ "gain
 完整事件、库存规则、schema 与可复制的两份规格见 [PLUGIN-DSL 第10节](PLUGIN-DSL.md#10-干员特质031671)。
 ## 声明式交互窗口（0.3.1，PR #682）
 
-感谢 **@DuolaCCCCat** 的 PR #682（#681）。把 [示例插件](examples/offers-demo/plugin.json) 所在目录复制到
+感谢 **@DuolaCCCCat** 的 PR #682（#681）。把 [示例插件](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/examples/offers-demo/plugin.json) 所在目录复制到
 `plugins/offers-demo/`，执行 `node tools/plugin.mjs check plugins/offers-demo`，然后在房间中启用。
-示例没有脚本和官方美术；[窗口声明](examples/offers-demo/offers.json) 在第 1、3、9 轮的官方机变结束后打开，
-[候选卡片](examples/offers-demo/cards.json) 各自声明名称、说明、符号图标和收益。
+示例没有脚本和官方美术；[窗口声明](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/examples/offers-demo/offers.json) 在第 1、3、9 轮的官方机变结束后打开，
+[候选卡片](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/examples/offers-demo/cards.json) 各自声明名称、说明、符号图标和收益。
 
 清单用 `api: 2`、`permissions: ["offers"]` 和 `offers: ["offers.json"]`，只允许 content/script/trusted 类；
 JSON Schema 与清单读取器共同校验示例，检查路径、API、类别、权限及对应内容。只有本插件内的 JSON 数组或

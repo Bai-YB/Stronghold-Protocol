@@ -8,6 +8,7 @@ import { PHASE, ERR } from '../../../shared/constants.js';
 import { generateDraft, applyCard, bountyBattles, isMultiRoundBounty, bountyCard } from '../choices.js';
 import { onPickCard } from '../botEmotes.js';
 import { weightedPick } from '../waves.js';
+import { randomPlayerGroups } from '../playerGroups.js';
 import { OK, fail, DELAYS } from './common.js';
 
 /** Cards of the personal choice (PRTS 卫戍协议：盟约 下半 §法术 教鞭: "于3个战术特训的悬赏任务中选择一项"). */
@@ -19,13 +20,22 @@ export class MatchSpDraft {
     const alive = this.alivePlayers();
     if (!draft || !alive.length) { this.beforePrepOffers(); return; }
     this.phase = PHASE.SP_DRAFT;
-    let order = alive.map((p) => p.playerId);
-    if (!this.isSolo) this.rngDraft.shuffle(order);
+    const groups = this.customRoom
+      ? randomPlayerGroups(alive, 4, this.rngDraft).map((members, i) => ({ id: `g${i + 1}`, members, taken: {} }))
+      : null;
+    let order = groups ? groups.flatMap((g) => g.members.map((p) => p.playerId)) : alive.map((p) => p.playerId);
+    if (!this.isSolo && !groups) this.rngDraft.shuffle(order);
     // 「AI 队友最后选择」 (GitHub #338): humans before AI seats, after the same shuffle (MatchPhases.humansFirst)
     order = this.humansFirst(order);
     // untimed: solo and any single-human match (soloUntimed); the co-op order / 6 cards stay
-    const untimed = this.soloUntimed;
-    this.sp = { ...draft, order, idx: 0, picks: {}, taken: {}, untimed, turnDeadline: 0 };
+    const untimed = this.soloUntimed || this.untimedChoices;
+    const groupByPlayer = groups
+      ? Object.fromEntries(groups.flatMap((g) => g.members.map((p) => [p.playerId, g.id])))
+      : null;
+    this.sp = {
+      ...draft, order, idx: 0, picks: {}, taken: {}, untimed, turnDeadline: 0,
+      ...(groups ? { grouped: true, groups, groupByPlayer, groupTaken: Object.fromEntries(groups.map((g) => [g.id, g.taken])) } : {}),
+    };
     this.setDeadline(0);
     this.startSpTurn();
     this.markPublic();
@@ -37,7 +47,14 @@ export class MatchSpDraft {
     return s.order[s.idx] ?? null;
   }
 
-  spCardAvailable(card) { return !!card && this.sp?.taken[card.idx] == null && (card.kind !== 'item' || this.itemPool.canGain(card.id)); }
+  spCardAvailable(card, playerId = this.spTurn()) {
+    const s = this.sp;
+    if (!card || !s) return false;
+    const groupId = s.groupByPlayer?.[playerId];
+    const taken = groupId ? s.groupTaken[groupId] : s.taken;
+    if (taken?.[card.idx] != null) return false;
+    return !!groupId || card.kind !== 'item' || this.itemPool.canGain(card.id);
+  }
 
   startSpTurn() {
     const s = this.sp;
@@ -48,7 +65,8 @@ export class MatchSpDraft {
       if (ps && ps.alive && s.picks[ps.playerId] == null) break;
       s.idx++;
     }
-    const available = s.cards.filter(c => this.spCardAvailable(c)).map(c => c.idx);
+    const playerId = s.order[s.idx];
+    const available = s.cards.filter(c => this.spCardAvailable(c, playerId)).map(c => c.idx);
     if (s.idx >= s.order.length || !available.length) { this.setDeadline(0); this.later(0, () => this.finishSpDraft()); return; }
     const token = ++this._turnToken;
     if (!s.untimed) {
@@ -58,7 +76,7 @@ export class MatchSpDraft {
         if (this.phase !== PHASE.SP_DRAFT || token !== this._turnToken) return;
         const ps = this.players.get(this.spTurn());
         if (!ps) return;
-        const avail = s.cards.filter(c => this.spCardAvailable(c)).map(c => c.idx);
+        const avail = s.cards.filter(c => this.spCardAvailable(c, ps.playerId)).map(c => c.idx);
         if (!avail.length) { this.finishSpDraft(); return; }
         this._applyCard(ps, avail[Math.floor(this.rngDraft() * avail.length)]);
       });
@@ -77,7 +95,7 @@ export class MatchSpDraft {
       if (this.phase !== PHASE.SP_DRAFT || token !== this._turnToken || !this.sp) return;
       const ps = this.players.get(this.spTurn());
       if (!ps || !ps.botControlled) return;
-      const avail = this.sp.cards.filter(c => this.spCardAvailable(c)).map(c => c.idx);
+      const avail = this.sp.cards.filter(c => this.spCardAvailable(c, ps.playerId)).map(c => c.idx);
       if (!avail.length) return;
       const fallback = () => this._applyCard(ps, this.bot.pickCard(this, ps, this.sp.cards, avail));
       if (this.bot.decide?.(this, ps, { kind: 'card',
@@ -93,19 +111,22 @@ export class MatchSpDraft {
     if (this.sp.picks[ps.playerId] != null) return fail(ERR.ALREADY);
     if (this.spTurn() !== ps.playerId) return fail(ERR.NOT_YOUR_TURN);
     if (!Number.isInteger(idx) || idx < 0 || idx >= this.sp.cards.length) return fail(ERR.BAD_TARGET);
-    if (!this.spCardAvailable(this.sp.cards[idx])) return fail(ERR.SOLD_OUT);
+    if (!this.spCardAvailable(this.sp.cards[idx], ps.playerId)) return fail(ERR.SOLD_OUT);
     this._applyCard(ps, idx);
     return OK;
   }
 
   _applyCard(ps, idx) {
     const s = this.sp;
-    if (!s || s.picks[ps.playerId] != null || !this.spCardAvailable(s.cards[idx])) return;
+    if (!s || s.picks[ps.playerId] != null || !this.spCardAvailable(s.cards[idx], ps.playerId)) return;
     const card = s.cards[idx];
     if (!card) return;
     s.picks[ps.playerId] = idx;
-    s.taken[idx] = ps.playerId;
-    try { applyCard(this, ps, card); } catch (e) { this.reportError(`applyCard ${card.id}`, e); }
+    const groupId = s.groupByPlayer?.[ps.playerId];
+    const group = groupId ? s.groups.find((g) => g.id === groupId) : null;
+    if (group) s.groupTaken[groupId][idx] = ps.playerId;
+    else s.taken[idx] = ps.playerId;
+    try { applyCard(this, ps, card, group ? group.members : null); } catch (e) { this.reportError(`applyCard ${card.id}`, e); }
     this.markPrivate(ps);
     this.markPublic();
     onPickCard(this, ps, card); // AI bots say "思考" when they take a bounty (enabled by default; SP_BOT_EMOTES=0 silences it)

@@ -18,7 +18,7 @@ export class MatchSettle {
     this._stopClientCombat();
     // the pending in-battle gains the views showed become persistent below (alive players) or lapse (DESIGN §20.15)
     for (const ps of this.order) if (ps.pendingLayerGains) { ps.pendingLayerGains = null; ps.dirty(); }
-    const cap = this.gd.lpCapPerRound;
+    const cap = this.endlessActive() ? 10 : this.gd.lpCapPerRound;
     // a 联防 battle that could not run at all (synthetic result) must not wipe the leakers' losses: charge their own leaks
     const uniteRan = !!(plan && uniteResult && !uniteResult.synthetic);
     const survivors = uniteRan ? uniteSurvivors(plan, uniteResult) : null;
@@ -66,7 +66,7 @@ export class MatchSettle {
       for (const [bondId, n] of Object.entries(r.layerGains || {})) {
         if (!this.gd.bond(bondId) || !(n > 0)) continue;
         const before = ps.layers[bondId] || 0;
-        const add = layerGainRoom(before, Math.floor(n));
+        const add = layerGainRoom(before, Math.floor(n), this.endlessActive() ? null : undefined);
         if (!(add > 0)) continue;
         ps.layers[bondId] = before + add;
         this.dispatch(ps, 'onLayers', { bondId, from: before, to: ps.layers[bondId], reason: 'battle' });
@@ -76,6 +76,7 @@ export class MatchSettle {
       ps.recompute();
     }
     this.eliminateBroken();
+    if (this.endlessActive()) this.noteEndlessRoundComplete(0);
     this.fields = [];
     this.watchers.clear();
     this.markPublic();
@@ -144,6 +145,7 @@ export class MatchSettle {
     this.phase = PHASE.RESULT;
     this.deadline = 0;
     for (const f of this.fields) f.live = false;
+    if (this.endlessActive()) this._finalizeEndless(reason);
     this.outcome = { victory: !!victory, hiddenReached: this.hiddenReached, hiddenCleared: !!hiddenCleared, reason };
     let result;
     try {
@@ -152,6 +154,9 @@ export class MatchSettle {
       this.reportError('buildResult', e);
       result = { t: 'm.result', victory: !!victory, roundsPassed: 0, reason, modeId: this.modeId, difficulty: this.difficulty, players: [] };
     }
+    if (this.endless) result.endless = { runId: this.endlessRunId, completedRounds: this.endless.completedRounds,
+      progress: this.endless.progress, seats: this.endless.seats, usedAI: this.endless.usedAI,
+      saving: this.endless.saving, rulesVersion: 1 };
     if (this.test) {
       result.test = true;
       result.testActions = this.testActions;

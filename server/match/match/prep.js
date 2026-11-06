@@ -6,6 +6,7 @@
 import { PHASE } from '../../../shared/constants.js';
 import { testSlice } from '../testTrace.js';
 import { DELAYS } from './common.js';
+import { isEndlessBoss } from '../endless.js';
 
 export class MatchPrep {
   enterPrep() {
@@ -180,10 +181,12 @@ export class MatchPrep {
     for (const ps of alive) this.dispatch(ps, 'onPrepEnd', { round: this.round });
     for (const ps of alive) ps.endPrep();
     const r = this.round;
-    if (r === this.gd.bossRound) {
+    if (this.endlessActive() && isEndlessBoss(this.endless.round)) {
+      this.startFinalAssault(false);
+    } else if (!this.endlessActive() && r === this.gd.bossRound) {
       this.hiddenLayerSum = alive.reduce((s, p) => s + p.activatedLayers(), 0);
       this.startFinalAssault(false);
-    } else if (r === this.gd.hiddenRound) {
+    } else if (!this.endlessActive() && r === this.gd.hiddenRound) {
       this.startFinalAssault(true);
     } else {
       this.startCombat();

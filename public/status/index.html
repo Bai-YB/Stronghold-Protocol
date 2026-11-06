@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#0c0f0e">
+  <title></title>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/status.css">
+  <link rel="stylesheet" href="/css/monitorPages.css">
+  <script type="module" src="/js/status.js"></script>
+</head>
+<body>
+  <aside class="urgent-ticker-stack" id="urgent-ticker-stack" aria-label="" hidden></aside>
+  <div class="status-shell">
+    <header class="status-header">
+      <a class="status-brand" href="/" aria-label="" id="brand-link">
+        <span class="status-brand__mark" aria-hidden="true">S</span>
+        <span><strong id="brand-title"></strong><small id="brand-subtitle"></small></span>
+      </a>
+      <a class="status-home" href="/" id="home-link"></a>
+    </header>
+
+    <main>
+      <section class="status-hero">
+        <div>
+          <p class="eyebrow" id="page-kicker"></p>
+          <h1 id="page-title"></h1>
+          <p class="status-intro" id="page-intro"></p>
+        </div>
+        <div class="health-pill" id="health-pill" role="status" aria-live="polite">
+          <span class="health-pill__dot" aria-hidden="true"></span>
+          <strong id="health-label"></strong>
+        </div>
+      </section>
+
+      <section id="announcements" class="announcement-panel" aria-labelledby="announcement-heading">
+        <div class="section-heading">
+          <div><p class="eyebrow" id="announcement-kicker"></p><h2 id="announcement-heading"></h2></div>
+          <span class="refresh-note" id="refresh-note"></span>
+        </div>
+        <p class="empty-announcements" id="announcement-empty" hidden></p>
+        <ol class="announcement-list" id="announcement-list"></ol>
+        <button class="public-history-toggle" id="announcement-history-toggle" type="button" aria-controls="announcement-list" aria-expanded="false" hidden></button>
+      </section>
+
+      <section class="polls-panel" id="polls"></section>
+
+      <section id="server" class="overview-section" aria-labelledby="overview-heading">
+        <div class="section-heading">
+          <div><p class="eyebrow" id="overview-kicker"></p><h2 id="overview-heading"></h2></div>
+          <span class="updated-note"><span id="updated-label"></span><strong id="updated-at">—</strong></span>
+        </div>
+        <div class="status-grid">
+          <article class="status-card status-card--online">
+            <span class="status-card__label" id="online-label"></span>
+            <strong class="status-card__value" id="online-value">—</strong>
+          </article>
+          <article class="status-card status-card--queue">
+            <span class="status-card__label" id="queue-label"></span>
+            <strong class="status-card__value" id="queue-value">—</strong>
+          </article>
+          <article class="status-card status-card--rooms">
+            <span class="status-card__label" id="rooms-label"></span>
+            <strong class="status-card__value" id="rooms-value">—</strong>
+          </article>
+          <article class="status-card status-card--matches">
+            <span class="status-card__label" id="matches-label"></span>
+            <strong class="status-card__value" id="matches-value">—</strong>
+          </article>
+        </div>
+        <section class="difficulty-section" aria-labelledby="difficulty-heading">
+          <div class="difficulty-section__heading">
+            <div><p class="eyebrow" id="difficulty-kicker"></p><h3 id="difficulty-heading"></h3></div>
+            <p id="difficulty-note"></p>
+          </div>
+          <div class="difficulty-table-wrap">
+            <table class="difficulty-table">
+              <thead><tr><th id="difficulty-label"></th><th id="playing-label"></th><th id="difficulty-queue-label"></th></tr></thead>
+              <tbody id="difficulty-rows"></tbody>
+            </table>
+          </div>
+        </section>
+        <dl class="server-meta">
+          <div><dt id="version-label"></dt><dd id="version-value">—</dd></div>
+          <div><dt id="uptime-label"></dt><dd id="uptime-value">—</dd></div>
+          <div class="connection-note" id="connection-note" role="status" aria-live="polite"></div>
+        </dl>
+      </section>
+
+      <section id="resources" class="pressure-section" aria-labelledby="pressure-heading">
+        <div class="section-heading">
+          <div><p class="eyebrow" id="pressure-kicker"></p><h2 id="pressure-heading"></h2><p class="pressure-description" id="pressure-description"></p></div>
+          <div class="pressure-badge is-unknown" id="pressure-badge" role="status" aria-live="polite">
+            <span class="pressure-badge__dot" aria-hidden="true"></span><strong id="pressure-label"></strong>
+          </div>
+        </div>
+        <div class="pressure-grid">
+          <article class="pressure-card pressure-card--latency" id="latency-card">
+            <div class="pressure-card__heading"><span id="latency-label"></span><strong><span id="latency-value">—</span><small id="latency-unit">ms</small></strong></div>
+            <p class="pressure-card__note" id="latency-note"></p>
+          </article>
+          <article class="pressure-card pressure-card--cpu">
+            <div class="pressure-card__heading"><span id="cpu-label"></span><strong id="cpu-value">—</strong></div>
+            <div class="pressure-meter" id="cpu-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuetext="">
+              <span id="cpu-bar"></span>
+            </div>
+            <p class="pressure-card__scope" id="cpu-scope"></p>
+          </article>
+          <article class="pressure-card pressure-card--memory">
+            <div class="pressure-card__heading"><span id="memory-label"></span><strong id="memory-value">—</strong></div>
+            <div class="pressure-meter" id="memory-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuetext="">
+              <span id="memory-bar"></span>
+            </div>
+            <p class="pressure-card__scope" id="memory-scope"></p>
+          </article>
+          <article class="pressure-card pressure-card--storage">
+            <div class="pressure-card__heading"><span id="storage-label"></span><strong id="storage-value">—</strong></div>
+            <div class="pressure-meter" id="storage-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span id="storage-bar"></span></div>
+            <p class="pressure-card__scope" id="storage-scope"></p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="status-footer">
+      <span id="footer-caption"></span>
+      <a href="/admin/" id="admin-link"></a>
+    </footer>
+  </div>
+</body>
+</html>

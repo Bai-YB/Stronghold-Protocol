@@ -67,16 +67,27 @@ export function normalizeSp(sp, players = []) {
   });
   const takenBy = new Map(); // idx → playerId
   const pickOf = new Map(); // playerId → idx
+  const grouped = sp.grouped === true;
   const src = sp.picks;
-  const add = (pid, idx) => {
+  const addPick = (pid, idx) => {
     if (typeof pid !== 'string' || !Number.isInteger(idx) || idx < 0 || idx >= cards.length) return;
-    takenBy.set(idx, pid);
     pickOf.set(pid, idx);
   };
-  if (Array.isArray(src)) src.forEach((v, i) => { if (isObj(v)) add(v.playerId, v.idx); else if (Number.isInteger(v) && order[i]) add(order[i], v); });
-  else if (isObj(src)) for (const [k, v] of Object.entries(src)) add(k, v);
-  if (isObj(sp.taken)) for (const [k, v] of Object.entries(sp.taken)) add(v, Number(k));
-  for (const c of cards) if (c.takenBy) add(c.takenBy, c.idx);
+  const addTaken = (pid, idx) => {
+    if (typeof pid !== 'string' || !Number.isInteger(idx) || idx < 0 || idx >= cards.length) return;
+    takenBy.set(idx, pid);
+    if (!grouped) pickOf.set(pid, idx);
+  };
+  if (Array.isArray(src)) src.forEach((v, i) => {
+    const pid = isObj(v) ? v.playerId : order[i];
+    const idx = isObj(v) ? v.idx : v;
+    if (grouped) addPick(pid, idx); else addTaken(pid, idx);
+  });
+  else if (isObj(src)) for (const [k, v] of Object.entries(src)) {
+    if (grouped) addPick(k, v); else addTaken(k, v);
+  }
+  if (isObj(sp.taken)) for (const [k, v] of Object.entries(sp.taken)) addTaken(v, Number(k));
+  for (const c of cards) if (c.takenBy) addTaken(c.takenBy, c.idx);
   for (const c of cards) c.takenBy = takenBy.get(c.idx) ?? null;
   let turnPid = null;
   if (typeof sp.turn === 'string') turnPid = sp.turn;
@@ -86,6 +97,9 @@ export function normalizeSp(sp, players = []) {
     name: typeof sp.name === 'string' && sp.name ? sp.name : null,
     desc: typeof sp.desc === 'string' && sp.desc ? sp.desc : null,
     untimed: !!sp.untimed,
+    grouped, groupIndex: Number.isInteger(sp.groupIndex) ? sp.groupIndex : 0,
+    groupCount: Number.isInteger(sp.groupCount) ? sp.groupCount : 0,
+    groupSize: Number.isInteger(sp.groupSize) ? sp.groupSize : 0,
     cards, order, turnPid, pickOf, takenBy, pickedCount: pickOf.size,
   };
 }

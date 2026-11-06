@@ -35,9 +35,10 @@
 // read once after the screen is up) in place of the event's account data — there are no accounts here.
 
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
-import { html, Button, Icon, useTicker, secondsLeft } from '../ui/components.js';
-import { useGameData, BandIcon, RichText, PlayerAvatar, Sprite, Img } from '../ui/gameComponents.js';
-import { StepHeader, ExitModal } from '../ui/matchChrome.js';
+import { html, Button, Icon, MicroLabel, useTicker, secondsLeft } from '../ui/components.js';
+import { useGameData, BandIcon, RichText, PlayerAvatar, Sprite, Img, LpTower } from '../ui/gameComponents.js';
+import { LegacyStepHeader as StepHeader } from '../ui/legacyMatchChrome.js';
+import { ExitModal } from '../ui/matchChrome.js';
 import { MatchInfoDialog, matchInfoModel } from '../ui/matchInfo.js';
 import { MatchEnemies } from '../ui/matchEnemies.js';
 import { actions, act } from '../ui/gameActions.js';
@@ -49,10 +50,7 @@ import { TurnBanner, TURN_BANNER_LATE_MS } from '../ui/turnBanner.js';
 import { onBootArt, preloadBootArt } from '../ui/protocolBoot.js';
 import { reducedMotion } from '../ui/device.js';
 import { useRise } from '../ui/transitions.js';
-import { CARD_KEY, cardStore, cardOperators, cardContext, seatOperator, seatCardSkin, seatArtSrc } from '../ui/seatArt.js';
-import { skinsStore, SKINS_KEY } from '../ui/skins.js';
-import { settingsStore } from '../ui/settingsStore.js';
-import { chessPortraitUrl, uiUrl } from '../ui/assetUrls.js';
+import { uiUrl } from '../ui/assetUrls.js';
 import { aggregateStats, peekStatsRecords, strategyBadgeIds, trophyMedalOf } from '../ui/stats.js';
 import { modeOffBonds, bandOffBonds, bandOffLine } from '../ui/gameLogic.js';
 import { t, tParts, tName } from '../../../shared/i18n.js';
@@ -209,13 +207,6 @@ export function draftRecords(records, bands) {
   } catch { return NO_RECORDS; }
 }
 
-/** 「【effect】 description」 of a strategy (the data's description usually opens with the 【effect】 already). */
-function BandText({ band, class: cls }) {
-  const text = band.descRaw || band.desc || '';
-  const head = band.effectName && !String(text).includes(`【${band.effectName}】`) ? `【${band.effectName}】` : '';
-  return html`<p class=${cls}>${head}<${RichText} text=${text} /></p>`;
-}
-
 /**
  * One doctor of the draft order: the name card (the 名片干员 art, avatar, name, state), the strategy box (⌛ 决策中 / •••
  * / the pick with 🔍, which opens it) and ✓ outside it; a beam runs along the row when the pick lands (useRise).
@@ -224,28 +215,23 @@ function BandText({ band, class: cls }) {
  * @param {{ p: any, i: number, picked: string|null, cur: boolean, self: boolean, arts: (string|null)[]|null, medal: string|null,
  *   gd: any, onPeek: (bandId: string) => void }} props
  */
-function OrderRow({ p, i, picked, cur, self, arts, medal, gd, onPeek }) {
+function OrderRow({ p, i, picked, cur, self, medal, gd, onPeek, turnSecs, solo }) {
   const flash = useRise(!!picked, 1100);
-  const [badArt, setBadArt] = useState([]);
-  const art = seatArtSrc(arts, badArt);
   const pband = picked ? gd.band(picked) : null;
   return html`<div class=${cx('dorder', cur && 'is-cur', picked && 'is-done', self && 'is-self', flash && 'is-flash')} style=${`--i:${i}`}>
-    <div class="dorder__card">
-      ${art ? html`<img key=${art} class="dorder__art" src=${art} alt="" aria-hidden="true" draggable=${false}
-        onError=${() => setBadArt((b) => (b.includes(art) ? b : [...b, art]))} />` : null}
-      <span class="dorder__face"><${PlayerAvatar} player=${p} self=${self} />${self ? html`<span class="dorder__me" title=${t('你')}><${Icon} name="user" /></span>` : null}</span>
-      <div class="dorder__text">
-        <b class="dorder__name">${medal ? html`<${Img} src=${medal} class="dorder__medal" />` : null}<span>${p.name || t('博士')}</span>${p.isBot ? html`<span class="dorder__ai">AI</span>` : null}</b>
-        <span class="dorder__state">${picked ? html`<span class="t-mint">${pband?.name || t('已选择')}</span>`
-          : cur ? html`<span class="t-gold">${t('决策中')}</span>` : html`<span class="t-dim">${t('等待中')}</span>`}</span>
-      </div>
+    ${!solo ? html`<span class="dorder__idx num">${i + 1}</span>` : null}
+    <${PlayerAvatar} player=${p} self=${self} />
+    <div class="dorder__text">
+      <b class="dorder__name">${medal ? html`<${Img} src=${medal} class="dorder__medal" />` : null}${p.name || t('博士')}${p.isBot ? html`<span class="dorder__ai">AI</span>` : null}</b>
+      <span class="dorder__state">${picked ? html`<span class="t-mint">${pband?.name || t('已选择')}</span>`
+        : cur ? html`<span class="t-gold"><${Icon} name="hourglass" />${t('决策中')}${turnSecs != null ? html`<b class="num dorder__secs">${turnSecs}s</b>` : null}</span>`
+          : html`<span class="t-dim"><${Icon} name="dots" />${t('等待中')}</span>`}</span>
     </div>
     ${picked ? html`<button type="button" class="dorder__box is-band" onClick=${() => onPeek(picked)} title=${t('查看「{name}」', { name: pband?.name || '' })}>
-        <${BandIcon} bandId=${picked} size="md" /><${Icon} name="search" class="dorder__zoom" />
+        <${BandIcon} bandId=${picked} size="sm" /><span class="dorder__check"><${Icon} name="check" /></span>
       </button>`
-      : cur ? html`<span class="dorder__box is-cur">${p.isBot ? null : html`<${Icon} name="hourglass" />`}<span>${t('决策中')}</span></span>`
-      : html`<span class="dorder__box is-wait"><${Icon} name="dots" /></span>`}
-    <span class="dorder__check" aria-hidden="true">${picked ? html`<${Icon} name="check" />` : null}</span>
+      : cur && self ? html`<span class="dorder__box"><${Sprite} k="bandChoose/youturn_finger" class="dorder__finger" fallback=${html`<${Icon} name="chevronLeft" />`} /></span>`
+        : html`<span class="dorder__box"></span>`}
   </div>`;
 }
 
@@ -257,7 +243,6 @@ export function BandDraftScreen({ held = null } = {}) {
   const priv = useStore((s) => s.match.private);
   const myId = useStore((s) => s.me.playerId);
   const roomSolo = useStore((s) => s.room?.mode === 'solo');
-  const roomSeats = useStore((s) => s.room?.seats);
   const gd = useGameData();
   const [sel, setSel] = useState(null);
   const [open, setOpen] = useState(false);   // the detail pane: only once a portrait (or a row's pick) is tapped
@@ -358,22 +343,6 @@ export function BandDraftScreen({ held = null } = {}) {
   const infoStatus = infoOpen ? draftInfoStatus({ myPick, pickName: myPick ? gd.band(myPick)?.name : null, myTurn, turnName, secs: turnSecs,
     waiting: !solo && !draft.done }) : null;
 
-  // 名片干员 art of the order rows (as on the room's seat cards: the doctor's pick, else one chosen by the player id), in
-  // the doctor's outfit for that operator (B6 picture-only outfits, docs/SKINS.md; the maintainer's decision 4 of 2026-10-21
-  // for the seat cards; ui/seatArt.js seatCardSkin): one's own choice at once, a teammate's from the match's public
-  // players (m.public.players[].skins), none for another seat while 「显示其他玩家的皮肤」 is off, the default art when the
-  // outfit's pictures are not here (chessPortraitUrl) — or fail to load (the row falls back to them: §35.51)
-  const cards = useMemo(() => cardContext(cardOperators(gd.list('chess'))), [gd.ready]);
-  const myCard = useStore((s) => s[CARD_KEY], Object.is, cardStore);
-  const localSkins = useStore((s) => s[SKINS_KEY], Object.is, skinsStore);
-  const otherSkins = useStore((s) => s.otherSkins !== false, Object.is, settingsStore);
-  const artOf = (p) => {
-    if (p.isBot) return null;
-    const seat = (Array.isArray(roomSeats) && roomSeats.find((x) => x && x.playerId === p.playerId)) || { playerId: p.playerId };
-    const op = seatOperator(seat, cards, { myId, myCard });
-    const skin = op ? seatCardSkin(p, op.chess.charId, { myId, localSkins, players, otherSkins }) : null;
-    return op ? [chessPortraitUrl(data.get('assets'), op.chess, { skin }), skin ? chessPortraitUrl(data.get('assets'), op.chess) : null] : null;
-  };
   // this browser's records (up to the stats store's size): read once, after the screen and its entry are up, not while
   // it mounts
   const [local, setLocal] = useState(NO_RECORDS);
@@ -388,100 +357,76 @@ export function BandDraftScreen({ held = null } = {}) {
     return medal ? uiUrl(data.get('assets'), `medalIcon/${medal.iconId}`) : null;
   }, [gd.ready, local]);
 
-  // what the right side shows: 已选定策略 after my pick, else the detail pane once opened, else only the wall
+  // Keep the v0.3.1 three-column composition: the selected strategy's details remain fixed beside the strategy wall.
   const allPicked = !!draft.done || (draft.order.length > 0 && draft.order.every((pid) => draft.picks.has(pid)));
-  const view = peek ? 'detail' : inOrder && myPick ? 'done' : open && band ? 'detail' : 'grid';
   const shownBand = peek ? gd.band(peek) : band;
   const rows = solo ? players.filter((p) => p.playerId === myId) : draft.order.map((pid) => players.find((p) => p.playerId === pid)).filter(Boolean);
 
-  const head = allPicked ? html`<div class="dturn is-done"><span class="dturn__txt"><b>${t('策略选择完成')}</b><span>${t('正在进入模拟…')}</span></span><${Icon} name="hourglass" class="dturn__glass" /></div>`
-    : myTurn ? html`<div class="dturn is-turn">
-        <span class="dturn__go"><${Sprite} k="bandChoose/youturn_finger" class="dturn__finger" fallback=${html`<${Icon} name="chevronLeft" class="dturn__finger" />`} />
-          <b>${t('请选择策略')}</b></span>
-        ${!solo ? html`<button type="button" class="draft-skip" disabled=${!canSkip || !!busy} aria-busy=${busy === 'skip' ? 'true' : undefined} onClick=${skip}
-            title=${skipsLeft > 0 ? t('跳过本轮，稍后再选') : t('跳过次数已用完')}>
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19v-5a7 7 0 0 1 7-7h7V3.5L22.5 9 17 14.5V11h-7a3 3 0 0 0-3 3v5z" /></svg>
-          <span>${skipsLeft > 0 ? t('跳过选择') : t('无法跳过')}</span></button>` : null}
-      </div>`
-    : turnName ? html`<div class="dturn"><span class="dturn__txt"><b>${turnName}</b><span>${t('正在选择策略…')}</span></span><${Icon} name="hourglass" class="dturn__glass" /></div>`
-    : null;
-
   // held after the draft (the server is already in BATTLE_CHECK): only to look at — 离开, 本局信息 and the 🔍 boxes would
   // open dialogs the match screen tears down a moment later
-  return html`<div class=${cx('screen draft', `draft--${view}`, held && 'is-held', head && 'has-status')} inert=${held ? true : undefined} aria-busy=${held ? 'true' : undefined}>
+  return html`<div class=${cx('screen draft', held && 'is-held')} inert=${held ? true : undefined} aria-busy=${held ? 'true' : undefined}>
     <div class="brief__bg" aria-hidden="true"></div>
     <${StepHeader} step=${2} of=${2} title=${t('选择策略')} micro="STRATEGY // BAND CHECK" pub=${clock ? { ...pub, deadline: clock.deadline } : { ...pub, deadline: 0 }}
-      total=${clock ? clock.total : null} onExit=${() => setExit(true)}
-      extra=${html`<button type="button" class="stephead__info" data-testid="match-info-open" aria-haspopup="dialog" onClick=${() => setInfoOpen(true)}
-        title=${t('本局信息')}><${Icon} name="search" /><span>${t('本局信息')}</span></button>`}
-      status=${head} />
+      total=${clock ? clock.total : null} onExit=${() => setExit(true)} />
     <main class="draft__main">
       <aside class="draft-order">
-        <div class="draft-order__deco" aria-hidden="true"><i></i><i></i><span>STRONGHOLD PROTOCOL<br />${solo ? 'SINGLE OPERATOR' : 'COLLABORATIVE SYSTEM'}</span></div>
-        <div class="draft-order__rows">
-          ${rows.map((p, i) => {
-            const picked = draft.picks.get(p.playerId) || (p.playerId === myId ? myPick : p.bandId) || null;
-            const cur = !picked && !allPicked && (solo || draft.turnPid === p.playerId);
-            return html`<${OrderRow} key=${p.playerId} p=${p} i=${i} picked=${picked} cur=${cur} self=${p.playerId === myId}
-              arts=${artOf(p)} medal=${p.playerId === myId ? myMedal : null} gd=${gd} onPeek=${peekBand} />`;
-          })}
-        </div>
+        <h3 class="brief-h"><span>${solo ? t('独立模拟') : t('决策顺序')}</span><${MicroLabel}>${solo ? 'FREE PICK' : 'RANDOM ORDER'}</${MicroLabel}></h3>
+        ${rows.map((p, i) => {
+          const picked = draft.picks.get(p.playerId) || (p.playerId === myId ? myPick : p.bandId) || null;
+          const cur = !picked && !allPicked && (solo || draft.turnPid === p.playerId);
+          return html`<${OrderRow} key=${p.playerId} p=${p} i=${i} picked=${picked} cur=${cur} self=${p.playerId === myId} solo=${solo}
+            turnSecs=${cur ? turnSecs : null} medal=${p.playerId === myId ? myMedal : null} gd=${gd} onPeek=${peekBand} />`;
+        })}
+        <${Button} variant="secondary" icon="search" block=${true} class="draft-order__info" data-testid="match-info-open"
+          aria-haspopup="dialog" onClick=${() => setInfoOpen(true)}>${t('查看禁用盟约与干员')}<//>
         ${!solo ? html`<p class="draft-order__tip" data-testid="draft-tip">${draftTip({ timed, turnSeconds: turnLen, autoName: myPick ? null : autoName, selected: open && autoId === sel })}</p>` : null}
       </aside>
-      <i class="draft__link" aria-hidden="true"></i>
-
-      ${view === 'done' ? html`<section class="draft-done" key=${myPick} aria-live="polite">
-          <div class="draft-done__art"><${BandIcon} bandId=${myPick} size="xl" /></div>
-          <div class="draft-done__head">
-            <span class="draft-tag">STRATEGY</span>
-            <h2 class="draft-done__title">${t('已选定策略')}</h2>
-            <b class="draft-done__name">${gd.band(myPick)?.name || ''}</b>
-          </div>
-          <div class="draft-done__hp">${t('初始生命值')}<b class="num">${gd.band(myPick)?.totalHp ?? '--'}</b></div>
-          ${gd.band(myPick) ? html`<${BandText} band=${gd.band(myPick)} class="draft-done__desc" />` : null}
-          <p class="draft-detail__status t-mint"><${Icon} name="check" />${t('已选择「{name}」', { name: gd.band(myPick)?.name || '' })}${!solo && !allPicked ? t('，等待其他博士') : ''}</p>
-        </section>` : html`
         <section class="draft-grid" role="listbox" aria-label=${t('策略')}>
-          ${bands.map((b, i) => {
+          ${bands.map((b) => {
             const isTaken = taken.has(b.bandId);
             const offNames = bandOffBonds(b, offBonds).map((id) => gd.bond(id)?.name || id); // 本局禁用 (still selectable)
-            const on = view === 'detail' && !peek && sel === b.bandId;
+            const on = !peek && sel === b.bandId;
             const badged = local.badges.has(b.bandId); // (the count is the detail pane's 已通过模拟 N 次)
+            const who = pickers.get(b.bandId) || [];
             return html`<button key=${b.bandId} type="button" role="option" aria-selected=${on ? 'true' : 'false'} data-band=${b.bandId}
                 aria-disabled=${isTaken ? 'true' : 'false'} title=${isTaken ? t('已被选择') : offNames.length ? bandOffLine(offNames) : b.name}
-                class=${cx('dband', on && 'is-sel', myPick === b.bandId && 'is-mine', isTaken && 'is-taken', offNames.length && 'is-off')} style=${`--n:${Math.min(i, 15)}`}
+                class=${cx('dband', on && 'is-sel', myPick === b.bandId && 'is-mine', isTaken && 'is-taken', offNames.length && 'is-off')}
                 onClick=${() => pickTile(b.bandId)}>
-              <span class="dband__frame"><${BandIcon} bandId=${b.bandId} size="lg" /></span>
+              <span class="dband__art"><${BandIcon} bandId=${b.bandId} size="lg" />
+                ${badged ? html`<span class="dband__badge" data-testid="band-badge" aria-hidden="true">
+                  <${Sprite} k="statistics/strategyBadge" class="dband__badge-art" fallback=${html`<span class="dband__medal"><${Icon} name="rook" /></span>`} /></span>` : null}</span>
               <span class="dband__name">${b.name}</span>
-              ${badged ? html`<span class="dband__badge" data-testid="band-badge" aria-hidden="true">
-                <${Sprite} k="statistics/strategyBadge" class="dband__badge-art" fallback=${html`<span class="dband__medal"><${Icon} name="rook" /></span>`} /></span>` : null}
+              <span class="dband__lp num"><i></i>${b.totalHp}</span>
               <${BandOffTag} names=${offNames} />
+              ${who.length ? html`<span class="dband__who">${who.slice(0, 4).map((p) => html`<${PlayerAvatar} key=${p.playerId} player=${p} size="sm" />`)}</span>` : null}
               ${isTaken ? html`<span class="dband__taken">${t('已被选择')}</span>` : null}
-              ${on ? html`<span class="dband__selmark" aria-hidden="true">SELECTED</span>` : null}
             </button>`;
           })}
         </section>
-        ${view === 'detail' && shownBand ? html`<aside class="draft-detail" key="detail">
-          <div class="draft-detail__body" key=${shownBand.bandId}>
-            <div class="draft-detail__art"><${BandIcon} bandId=${shownBand.bandId} size="xl" /></div>
+        <aside class="draft-detail brackets">
+          ${shownBand ? html`<div class="draft-detail__art"><${BandIcon} bandId=${shownBand.bandId} size="xl" /></div>
             ${local.won[shownBand.bandId] ? html`<span class="draft-detail__medal">${t('已通过模拟{n}次', { n: local.won[shownBand.bandId] })}</span>` : null}
-            <div class="draft-detail__hp">${t('初始生命值')}<b class="num">${shownBand.totalHp ?? '--'}</b></div>
-            <span class="draft-tag">STRATEGY</span>
+            <div class="draft-detail__hp"><span>${t('初始生命值')}</span><${LpTower} value=${shownBand.totalHp} size="lg" /></div>
             <h2 class="draft-detail__name">${shownBand.name}</h2>
             <${BandOffNote} names=${bandOffBonds(shownBand, offBonds).map((id) => gd.bond(id)?.name || id)} />
-            <span class="draft-tag">INTRO</span>
-            <div class="draft-detail__eff"><${BandText} band=${shownBand} class="draft-detail__desc" /></div>
-          </div>
+            <div class="draft-detail__eff">
+              <${MicroLabel} tone="mint">EFFECT</${MicroLabel}>
+              <b>${shownBand.effectName || ''}</b>
+              <${RichText} as="p" text=${shownBand.descRaw || shownBand.desc} class="draft-detail__desc" />
+            </div>` : html`<p class="t-dim">${t('选择一个策略查看详情')}</p>`}
           <div class="draft-detail__actions">
             ${peek ? html`<p class="draft-detail__status"><${Icon} name="search" />${myPick === peek ? t('你选择的策略') : t('{names} 选择的策略', { names: (pickers.get(peek) || []).map((x) => x.name).join('、') || t('博士') })}</p>
               <div class="draft-detail__btns"><${Button} variant="secondary" size="lg" icon="chevronLeft" onClick=${() => setPeek(null)}>${t('返回')}<//></div>`
-            : html`${selTaken ? html`<p class="draft-detail__status draft-detail__status--taken"><${Icon} name="close" />${t('队友已选，请选择其他策略')}</p>`
+            : html`${myPick ? html`<p class="draft-detail__status t-mint"><${Icon} name="check" />${t('已选择「{name}」', { name: gd.band(myPick)?.name || '' })}${!solo && !draft.done ? t('，等待其他博士') : ''}</p>`
+              : selTaken ? html`<p class="draft-detail__status draft-detail__status--taken"><${Icon} name="close" />${t('队友已选，请选择其他策略')}</p>`
                 : !myTurn ? html`<p class="draft-detail__status"><${Icon} name="hourglass" />${!inOrder ? t('观战中') : turnName ? t('{turnName} 正在决策…', { turnName }) : t('等待轮到你')}</p>` : null}
               <div class="draft-detail__btns">
-                <${Button} variant="primary" size="lg" icon="check" class="draft-confirm" disabled=${!myTurn || !band || selTaken} loading=${busy === 'pick'} onClick=${confirm}>${selTaken ? t('已被选择') : t('确认选择')}<//>
+                ${!solo ? html`<${Button} variant="secondary" size="lg" icon="chevrons" disabled=${!canSkip} loading=${busy === 'skip'} onClick=${skip}
+                  title=${skipsLeft > 0 ? t('跳过本轮，稍后再选') : t('跳过次数已用完')}>${t('跳过')}${skipsLeft > 0 ? '' : t('（已用）')}<//>` : null}
+                <${Button} variant="primary" size="lg" icon="check" class="draft-confirm" disabled=${!myTurn || !band || selTaken || !!myPick} loading=${busy === 'pick'} onClick=${confirm}>${selTaken ? t('已被选择') : t('确认选择')}<//>
               </div>`}
           </div>
-        </aside>` : null}`}
+        </aside>
     </main>
     <${ExitModal} open=${exit} onClose=${() => setExit(false)} solo=${solo} />
     <${MatchInfoDialog} open=${infoOpen} onClose=${() => setInfoOpen(false)} model=${info}

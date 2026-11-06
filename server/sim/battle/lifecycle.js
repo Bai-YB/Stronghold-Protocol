@@ -166,7 +166,7 @@ export class BattleLifecycle {
       if (!this._hasPendingEnemySchedules()) { this._finish('cleared'); return; }
     }
     if (this.time >= this.timeLimit - 1e-9) { this._timeout(); return; }
-    if (this.time >= MAX_BATTLE_TIME) { this._timeout(); return; }
+    if (this.time >= MAX_BATTLE_TIME && !(this.flags.endlessNoBossTimeout && poolHolds)) { this._timeout(); return; }
   }
 
   _hasPendingEnemySchedules() {

@@ -358,16 +358,20 @@ function composeContentSet({ registry, ids = [], checkDataOnly = false }) {
   }
   for (const [rel, body] of bodies) files[rel] = { sha256: nodeSha256(body), bytes: body.length };
   const vanilla = plugins.length === 0;
+  // A set with no scripts and no rules is plain data (custom-room's seats/timers are the only such plugin today): it runs
+  // in the page exactly like an official version's data set — 作战统计 and replays keep working. The Worker is for
+  // untrusted scripts, not for data.
+  const dataOnly = !vanilla && scripts.length === 0 && !rules;
   // The interaction windows of the set (PLUGIN API v2, docs/PLUGINS.md §10b): the registry already checked each
   // file, including transitive option sources in content.files: every offer byte participates in cs.
   const offers = plugins.flatMap(p => (p.offers || []).map(o => ({ pluginId: p.id, ...o })));
-  const index = vanilla ? base.identity.index : { ...base.identity.index, cs, vanilla: false, plugins: parts, settings, data: {}, i18n: {}, bounds: {}, ...(scripts.length ? {scripts:{}, execution} : {}), ...(rules ? { rules } : {}) };
+  const index = vanilla ? base.identity.index : { ...base.identity.index, cs, vanilla: false, ...(dataOnly ? { dataOnly: true } : {}), plugins: parts, settings, data: {}, i18n: {}, bounds: {}, ...(scripts.length ? {scripts:{}, execution} : {}), ...(rules ? { rules } : {}) };
   if (!vanilla) for (const [rel, f] of Object.entries(files)) {
     const url = base.files.get(rel)?.equals(bodies.get(rel)) ? `/data/${rel.replace(/^(data\/)/, '')}?v=${f.sha256.slice(0, 8)}` : `/cs/${csUrlPart(cs)}/${rel}`;
     const [section, name] = rel.split('/');
     index[section][name.slice(0, -5)] = { url, ...f };
   }
-  const set = deepFreeze({ cs, vanilla, plugins: plugins.map(p => ({ id: p.id, version: p.manifest.version, hash: p.content.hash })),
+  const set = deepFreeze({ cs, vanilla, ...(dataOnly ? { dataOnly: true } : {}), plugins: plugins.map(p => ({ id: p.id, version: p.manifest.version, hash: p.content.hash })),
     data, files, ...(scripts.length ? {scripts, execution} : {}), ...(rules ? { rules } : {}), modes: Object.values(data.config.modes), problems: [], warnings, index, settings, bounds: boundsSnap,
     kitted: [...KITTED_CHARS, ...Object.keys(data.backups.units).filter(id => !own(base.data.backups.units, id))],
     // PLUGIN API v2 (docs/PLUGINS.md §10b): the interaction windows the set declares, tagged with their plugin. Data

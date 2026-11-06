@@ -247,7 +247,9 @@ function MatchScreen() {
   const playerSettings = useSettings();
   const metricsSetting = playerSettings.combatMetrics === true;
   // gameplay plugins (DESIGN §32.6): the HUD corner's MOD mark — re-rendered only when the room's content changes
-  const modRoom = useStore((s) => (s.room?.content?.vanilla === false ? s.room : null), (a, b) => (a?.content ?? null) === (b?.content ?? null));
+  // a plain-data content set (no scripts, no rules — custom-room's seats/timers) still runs the original simulation
+  // in this page, so 作战统计 works there; only real gameplay plugins (scripts/rules) hide it
+  const modRoom = useStore((s) => (s.room?.content?.vanilla === false && s.room.content.dataOnly !== true ? s.room : null), (a, b) => (a?.content ?? null) === (b?.content ?? null));
   // the room's spectator seats for the top bar's 观战席 capsule (ui/hud.js SpectatorPill; GitHub #120): room.state keeps coming
   // during the match, the list is replaced only when a seat changes — shallowEqual keeps an unrelated push from re-rendering
   const specFacts = useStore((s) => ({
@@ -302,6 +304,7 @@ function MatchScreen() {
   const [bossPlate, setBossPlate] = useState(null);      // ui/bossPlates.js: { kind: 'final'|'core'|'end', … , key }
   const [readyBusy, setReadyBusy] = useState(false);
   const [spBusy, setSpBusy] = useState(null);
+  const [endlessBusy, setEndlessBusy] = useState(false);
   const [personalBusy, setPersonalBusy] = useState(null); // { choiceId, idx }: an older request cannot clear a newer pick
   const [layer, setLayer] = useState('ALL');             // 联防 / 最终攻势 camera: 'L' | 'ALL' | 'R'
   const [pen, setPen] = useState(false);                 // the camera shows the enemy preview pen (research 09 §2)
@@ -1875,7 +1878,7 @@ function MatchScreen() {
       ${showShop ? html`<${ShopBar} priv=${priv} editable=${editable} collapsed=${barCollapsed} refreshBusy=${refreshBusy} onCollapse=${setCollapsed}
         barRef=${barRef} offBonds=${offBonds}
         onBuy=${buy} onLevel=${() => actions.levelUp()} onRefresh=${() => actions.refresh()} onFreeze=${() => actions.freeze()}
-        onDetail=${(id, kind, hint) => setDetail({ kind: kind === 'item' ? 'item' : 'chess', id, hint: hint || null, tap: ++cardTap.current })}
+        onDetail=${(id, kind, hint, unowned) => setDetail({ kind: kind === 'item' ? 'item' : 'chess', id, hint: hint || null, unowned: unowned === true, tap: ++cardTap.current })}
         onDetailClose=${() => setDetail((d) => (d?.kind === 'chess' || d?.kind === 'item' ? null : d))}
         onRefuse=${(reason) => { toast(reason, 'warn'); audio.sfx('error', { volume: 0.5 }); }}
         reward=${phase === PHASE.PREP && !rewardMin ? priv?.shop?.rewardOffer || null : null}
@@ -1936,6 +1939,14 @@ function MatchScreen() {
         onRetreat=${retreatSel} onSell=${sellSel} onDestroy=${sellSel} />` : null}
     </div>
 
+    ${pub?.phase === PHASE.ENDLESS_OFFER ? html`<section class="endless-pick" role="dialog" aria-modal="true" aria-label=${t('周期协议选择')}>
+      <div class="endless-pick__panel"><small>ENDLESS PROTOCOL // ${t('周期增益')}</small><h2>${t('选择一项协议')}</h2><p>${t('协议持续至下次领袖战后，30 秒未选择将自动采用通用协议。')}</p>
+        <div class="endless-pick__cards">${(pub.endless?.offers?.[myId] || []).map((card) => html`<button type="button" key=${card.id} disabled=${!alive || endlessBusy} onClick=${async () => {
+          setEndlessBusy(true); try { await net.request('g.endlessPick', { protocolId: card.id }); } catch (e) { toast(e?.message || t('选择失败，请重试'), 'warn'); } finally { setEndlessBusy(false); }
+        }}><b>${card.name}</b><span>${card.desc}</span></button>`)}</div>
+        ${!alive ? html`<span class="endless-pick__watch">${t('观战中 · 队友正在选择')}</span>` : null}
+      </div>
+    </section>` : null}
     ${hasOffers && !sp && !personalChoice ? html`<${OfferOverlay} pub=${pub} myId=${myId} readOnly=${spectator || !alive} onAction=${actions.offer} />` : null}
     ${sp ? html`<${ChoiceOverlay} pub=${pub} sp=${sp} myId=${myId} solo=${solo} busyIdx=${spBusy} total=${total}
       onPick=${async (i) => { setSpBusy(i); await actions.choice(i); setSpBusy(null); }} />` : null}

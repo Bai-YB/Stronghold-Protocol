@@ -5,12 +5,14 @@
 
 import { PHASE, GEO } from '../../../shared/constants.js';
 import { deriveSeed } from '../../sim/rng.js';
-import { uniteBattleOpts, uniteSurvivors } from '../unite.js';
+import { combineUniteResults, uniteBattleOpts, uniteSurvivors } from '../unite.js';
 import { FieldRunner, timelineAt, uniteBillBounds } from '../fields.js';
 import { uniteLeft } from '../../sim/spec.js';
 import { FLOW_TICKER_PRIORITY, DELAYS } from './common.js';
 import { msg } from '../../../shared/i18n.js';
 import { onStartUnite } from '../botEmotes.js';
+
+const fallbackGroups = (plan) => Array.isArray(plan.groups) ? plan.groups : [plan];
 
 export class MatchUnite {
   startUnite(plan) {
@@ -18,8 +20,10 @@ export class MatchUnite {
     this.phase = PHASE.UNITE;
     this.unitePlan = plan;
     const limit = this.wave ? this.wave.timeLimit : 60;
-    const battle = this.newBattle(this._uniteOpts(plan, limit));
-    this.fields = [{ fieldId: 'u', kind: 'unite', players: plan.helpers.map((p) => p.playerId), battle, live: true }];
+    this.fields = fallbackGroups(plan).map((group) => ({
+      fieldId: group.fieldId || 'u', groupId: group.id || null, kind: 'unite',
+      players: group.helpers.map((p) => p.playerId), battle: this.newBattle(this._uniteOpts(group, limit)), live: true,
+    }));
     this.deadline = this.sched.instant ? 0 : this.sched.now() + Math.round((limit / this.gameSpeed) * 1000);
     this._defaultWatch();
     this.markPublic();
@@ -30,12 +34,15 @@ export class MatchUnite {
       onTick: (runner) => this._uniteTick(runner),
       onDone: (runner) => {
         if (this.phase !== PHASE.UNITE) return;
-        const res = runner.resultOf(this.fields[0]);
-        this._collectSimErrors(this.fields[0], res);
-        this.fields[0].live = false;
+        for (const f of this.fields) {
+          const res = runner.resultOf(f);
+          this._collectSimErrors(f, res);
+          f.live = false;
+        }
         this.deadline = 0;
         this.markPublic();
-        this.later(this.scaled(DELAYS.COMBAT_END), () => this.settle(plan, res));
+        const result = plan.groups ? combineUniteResults(plan, this.fields) : (runner.resultOf(this.fields[0]) || null);
+        this.later(this.scaled(DELAYS.COMBAT_END), () => this.settle(plan, result));
       },
     });
     this.runner.start();
@@ -49,8 +56,9 @@ export class MatchUnite {
    */
   _uniteOpts(plan, limit) {
     const { wave, players } = uniteBattleOpts(this, plan, limit);
+    const fieldId = plan.fieldId || 'u';
     return {
-      seed: deriveSeed(this.seed, `u:${this.round}`),
+      seed: deriveSeed(this.seed, plan.id ? `u:${this.round}:${plan.id}` : `u:${this.round}`),
       kind: 'unite',
       modeId: this.modeId,
       round: this.round,
@@ -62,7 +70,7 @@ export class MatchUnite {
       routes: wave.routes,
       sharedBoss: null,
       flags: { layerGainsEnabled: false, ...this.gd.dp },
-      fieldId: 'u',
+      fieldId,
       // leaked enemies re-enter with the stats they had: the round template's stat overrides apply again
       enemyOverrides: this.wave && this.wave.overrides ? this.wave.overrides : {},
       waveId: wave.templateId,
@@ -73,13 +81,18 @@ export class MatchUnite {
     this.phase = PHASE.UNITE;
     this.unitePlan = plan;
     const limit = this.wave ? this.wave.timeLimit : 60;
-    const f = this._ccField({ fieldId: 'u', kind: 'unite', players: plan.helpers.map((p) => p.playerId), opts: this._uniteOpts(plan, limit) });
+    const fields = fallbackGroups(plan).map((group) => this._ccField({
+      fieldId: group.fieldId || 'u', kind: 'unite', players: group.helpers.map((p) => p.playerId), opts: this._uniteOpts(group, limit),
+    }));
+    fields.forEach((f, i) => { f.groupId = fallbackGroups(plan)[i].id || null; });
     this.deadline = this.sched.instant ? 0 : this.sched.now() + Math.round((limit / this.gameSpeed) * 1000);
     this.watchers.clear();
-    this._launch([f]);
-    // helpers and everyone else (as observers, spectator seats included) simulate the same 联防 spec locally
+    this._launch(fields);
+    // Each helper pair owns one fallback field; all other players observe the first field by default.
     for (const ps of this._viewers()) {
-      this.watchers.set(ps.playerId, 'u');
+      const f = fields.find((field) => field.players.includes(ps.playerId)) || fields[0];
+      if (!f) continue;
+      this.watchers.set(ps.playerId, f.fieldId);
       this._sendStart(ps.playerId, f, { watch: !f.players.includes(ps.playerId) });
     }
     this.markPublic();
@@ -88,15 +101,14 @@ export class MatchUnite {
 
   _finishUniteClient() {
     if (this.phase !== PHASE.UNITE) return;
-    const f = this.fields[0];
-    const res = f.result;
-    this._collectSimErrors(f, res);
+    for (const f of this.fields) this._collectSimErrors(f, f.result);
     this._stopClientCombat();
-    f.live = false;
+    for (const f of this.fields) f.live = false;
     this.deadline = 0;
     this.markPublic();
     const plan = this.unitePlan;
-    this.later(this.scaled(DELAYS.COMBAT_END), () => this.settle(plan, res));
+    const result = plan.groups ? combineUniteResults(plan, this.fields) : (this.fields[0]?.result || null);
+    this.later(this.scaled(DELAYS.COMBAT_END), () => this.settle(plan, result));
   }
 
   /**
@@ -116,6 +128,36 @@ export class MatchUnite {
     const plan = this.unitePlan;
     if (this.phase !== PHASE.UNITE || !plan || !ps || !plan.leakers.includes(ps)) return null;
     const pid = ps.playerId;
+    if (Array.isArray(plan.groups)) {
+      let total = plan.notReentered.get(pid) || 0;
+      for (const group of plan.groups) {
+        const sent = group.leaked.filter((l) => l.sourcePlayerId === pid).length;
+        if (!sent) continue;
+        const f = this.fields.find((x) => x && x.groupId === group.id) || null;
+        if (!f) { total += sent; continue; }
+        let res = null;
+        if (f.cc) res = f.done ? f.result : null;
+        else if (f.battle && f.battle.finished) { try { res = f.battle.result(); } catch { res = null; } }
+        if (res) {
+          if (res.synthetic) total += sent;
+          else total += uniteSurvivors({ groups: [group], notReentered: new Map() }, { groups: [{ id: group.id, result: res }] }).get(pid) || 0;
+          continue;
+        }
+        let live = null;
+        if (f.cc) {
+          if (f.mode === 'server' && f.timeline) {
+            const sample = timelineAt(f.timeline, this._fieldElapsed(f));
+            live = sample && sample[4] && typeof sample[4] === 'object' ? sample[4] : null;
+          } else live = f.progress && f.progress.left && typeof f.progress.left === 'object' ? f.progress.left : null;
+        } else if (f.battle) {
+          try { live = uniteLeft(f.battle); } catch { live = null; }
+        }
+        const bounds = uniteBillBounds(group.leaked, this.gd);
+        const bound = bounds.get(pid) ?? sent;
+        total += live ? Math.min(bound, Math.max(0, Math.trunc(Number(live[pid]) || 0))) : sent;
+      }
+      return total;
+    }
     const f = this.fields.find((x) => x && x.kind === 'unite') || null;
     let res = null;
     if (f && f.cc) res = f.done ? f.result : null;
@@ -144,10 +186,10 @@ export class MatchUnite {
 
   /** Server-run 联防 (streaming mode): refresh m.public about once a game second when a leaker's count moved. */
   _uniteTick(runner) {
-    const f = runner && runner.fields ? runner.fields[0] : null;
-    if (!f || !f.battle || runner.ticks % 30 !== 0) return;
+    const fields = runner && runner.fields ? runner.fields.filter((f) => f && f.battle) : [];
+    if (!fields.length || runner.ticks % 30 !== 0) return;
     let key = '';
-    try { key = JSON.stringify(uniteLeft(f.battle)); } catch { key = ''; }
+    try { key = JSON.stringify(fields.map((f) => [f.fieldId, uniteLeft(f.battle)])); } catch { key = ''; }
     if (key === this._uniteLeftKey) return;
     this._uniteLeftKey = key;
     this.markPublic();

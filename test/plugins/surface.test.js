@@ -89,7 +89,7 @@ function expectedNames() {
   for (const name of Object.keys(sdk).filter((k) => k !== 'SDK_ID' && k !== 'SDK_MEMBERS').sort()) names.push(`sdk.export.${name}`);
   names.push('api.PLUGIN_API.min', 'api.PLUGIN_API.current');
   names.push('record.file.bonds', 'record.file.items', 'record.operator.forms.tags', 'record.operator.forms.tokens');
-  names.push('record.operator.fx', 'overlay.fx.index', 'overlay.fx.flipbooks', 'overlay.fx.bind', 'overlay.fx.silentPhases', 'dsl.fx.plugin');
+  names.push('record.operator.fx', 'overlay.fx.index', 'overlay.fx.flipbooks', 'overlay.fx.bind', 'overlay.fx.bindOperators', 'overlay.fx.bindSkins', 'overlay.fx.bindEnemies', 'overlay.fx.bindEvents', 'overlay.fx.silentPhases', 'dsl.fx.plugin');
   names.push(...TRAIT_SURFACE.map(r => r.name));
   return names;
 }

@@ -17,7 +17,8 @@
 //            range); no items on the board; chess count ≤ deploy cap
 //            (where a merge's elite goes — a consumed deployed copy's tile, else the hand — needs the state before the
 //            merge: audit.js checks it per merge)
-//   bonds    ps.bonds equals a fresh computeBonds() (every mutation recomputed them); every bond's layers 0 … BOND_LAYER_CAP
+//   bonds    ps.bonds equals a fresh computeBonds() (every mutation recomputed them); every bond's layers are finite and
+//            non-negative, capped at BOND_LAYER_CAP outside active Endless runs
 //   shop     slot count follows the rolled layout; ids known; banned chess never offered by the shop / rewards
 //   elim.    an eliminated player owns nothing (board, hand, temp, shop, offers, bounties, funds)
 //   choice   a player's open 教鞭 choice (`personalChoice`) is one of an alive, not-Ready player in the PREP of its own round,
@@ -70,9 +71,9 @@ export function collectViolations(m, { limit = 25 } = {}) {
     if (!(ps.shop.level >= 1 && ps.shop.level <= gd.maxShopLevel)) fail(`${id}: shop level ${ps.shop.level}`);
     if (!(ps.shop.upgradePrice >= 0)) fail(`${id}: upgradePrice ${ps.shop.upgradePrice}`);
     if (!Number.isInteger(ps.shop.freeRefreshes) || ps.shop.freeRefreshes < 0) fail(`${id}: freeRefreshes ${ps.shop.freeRefreshes}`);
-    // the official per-bond layer cap (shared/constants.js): no writer may pass it
+    // Ordinary runs use the official per-bond cap. Endless deliberately removes it after transition.
     for (const [b, v] of Object.entries(ps.layers || {})) {
-      if (!(Number.isFinite(v) && v >= 0 && (!(BOND_LAYER_CAP > 0) || v <= BOND_LAYER_CAP))) fail(`${id}: ${b} layers ${v}`);
+      if (!(Number.isFinite(v) && v >= 0 && (m.endlessActive?.() || !(BOND_LAYER_CAP > 0) || v <= BOND_LAYER_CAP))) fail(`${id}: ${b} layers ${v}`);
     }
 
     if (!ps.alive) {

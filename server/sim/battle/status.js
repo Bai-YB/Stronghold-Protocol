@@ -174,6 +174,8 @@ export class BattleStatus {
    */
   applyStatus(target, key, opts = {}) {
     if (!target || !target.alive) return false;
+    const hardControl = key === 'stun' || key === 'freeze' || key === 'sleep' || key === 'levitate';
+    if (hardControl && target.side === 'enemy' && Number(target._endlessControlImmuneUntil) > this.time) return false;
     const src = opts.source;
     if (src && src.side && src.side !== target.side && target.s.flags.invulnerable && target.s.flags.untargetable) return false;
     if (!opts.ignoreSelect && target.s.flags.liftoff && evadesGround(src, target)) return false;
@@ -198,6 +200,9 @@ export class BattleStatus {
     if (RESIST_STATUSES.has(key) && !opts.resistApplied) {
       const rv = this.resistOf(target);
       if (rv > 0) duration *= 1 - rv;
+    }
+    if (hardControl && target.side === 'enemy' && this.flags.endlessHardControlCap) {
+      duration = Math.min(duration, target.isBoss ? 3 : 6);
     }
     // 浮空 / 缚地 (ba.levitate, ba.groundbind): "对重量大于3的单位持续时间减半"
     if ((key === 'levitate' || key === 'groundbind') && target.s.massLevel > LEVITATE_HALF_WEIGHT) duration /= 2;
@@ -247,6 +252,9 @@ export class BattleStatus {
     if (f && target.side === 'enemy' && (f.levitate || f.unblockable || f.fear || f.sleep)) this._unblock(target);
     if (f && target.side === 'ally' && f.noBlock) this.releaseBlocked(target);
     if (this._hooks.statusApplied) this.emit('statusApplied', { source, target, status: key, duration, value, entered });
+    if (hardControl && target.side === 'enemy' && this.flags.endlessHardControlCap) {
+      target._endlessControlImmuneUntil = this.time + duration + (target.isBoss ? 2 : 1);
+    }
     return true;
   }
 

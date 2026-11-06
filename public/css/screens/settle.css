@@ -383,3 +383,6 @@ span.settle__nexticon .icon { width: .34rem; height: .34rem; }
   .settle *, .settle *::before, .settle *::after { animation: none; }
   .sintro { display: none; }
 }
+.sendless-stat { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: .08rem .16rem; margin: .1rem auto; padding: .08rem .14rem; width: fit-content; max-width: 92%; color: #d9ede8; border: 1px solid rgba(111, 218, 195, .38); background: rgba(7, 22, 22, .72); font-size: .13rem; }
+.sendless-stat b { color: #98ead5; }
+.sendless-stat small { color: #b7c7c2; }

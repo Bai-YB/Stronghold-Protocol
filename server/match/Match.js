@@ -246,6 +246,7 @@ import { MatchSettle } from './match/settle.js';
 import { installTestTrace } from './testTrace.js';
 import { MatchTestCommands } from './match/testCommands.js';
 import { MatchOffers } from './match/offers.js';
+import { MatchEndless } from './match/endless.js';
 import { createExternalAI } from './llmGate.js';
 
 export { FLOW_TICKER_PRIORITY, DELAYS, BAND_TURN_SECONDS } from './match/common.js';
@@ -283,6 +284,10 @@ export class Match {
     this.opts = opts;
     this.roomCode = opts.roomCode ?? '----';
     this.mode = opts.mode === 'solo' ? 'solo' : 'coop';
+    /** Whether this match was started from the separate custom-room flow. */
+    this.customRoom = opts.customRoom === true;
+    /** Custom co-op rooms may remove timers from strategy and 机变 selections only. */
+    this.untimedChoices = opts.untimedChoices === true;
     this.difficulty = opts.difficulty;
     this.modeId = opts.modeId || modeIdFor(this.mode, opts.difficulty);
     this.seed = (Number(opts.seed) >>> 0) || 1;
@@ -393,6 +398,16 @@ export class Match {
     this.ds = dataSourceFor(this.data);
     /** client-side combat (DESIGN §14) — see the header */
     this.clientCombat = opts.clientCombat != null ? !!opts.clientCombat : envClientCombat();
+    this.runKind = opts.runKind === 'endless' ? 'endless' : null;
+    if (this.runKind === 'endless') this.clientCombat = false;
+    this.endlessRunId = this.runKind === 'endless' ? String(opts.endlessRunId || `${this.seed.toString(36)}-${this.startedAt}`) : null;
+    this.onEndlessCheckpointFn = typeof opts.onEndlessCheckpoint === 'function' ? opts.onEndlessCheckpoint : null;
+    this.onEndlessFinalizeFn = typeof opts.onEndlessFinalize === 'function' ? opts.onEndlessFinalize : null;
+    this.endless = this.runKind === 'endless' ? {
+      active: false, round: 0, completedRounds: 0, progress: 0, seats: opts.seats.length,
+      usedAI: opts.seats.some((s) => s?.isBot === true), protocols: {}, offers: {}, protocolUntil: 0,
+      affix: null, entryLp: {}, startedAt: 0, finalized: false, saving: 'saved', bossStartAt: 0,
+    } : null;
     this.verifyMode = parseVerify(opts.verify ?? env('SP_VERIFY'));
     /** wall-clock ms per slice of a server-run normal / 联防 field (virtual time: at once) */
     this.headlessSliceMs = Number.isFinite(opts.headlessSliceMs) && opts.headlessSliceMs > 0 ? opts.headlessSliceMs : this.sched.virtual ? Infinity : HEADLESS_SLICE_MS;
@@ -423,6 +438,7 @@ export class Match {
     this.rngSetup = rng('setup');
     this.rngShop = rng('shop');
     this.rngWaves = rng('waves');
+    this.rngEndless = rng('waves:endless');
     this.rngDraft = rng('draft');
     this.rngBots = rng('bots');
     this.rngMeta = rng('meta');
@@ -437,6 +453,8 @@ export class Match {
     }
     if (!this.players.size) throw new TypeError('Match: seats required');
     this.order = [...this.players.values()].sort((a, b) => a.seat - b.seat);
+    // Custom scaling follows occupied match seats, including AI seats, never the room's empty capacity.
+    this.gd.customPlayerCount = this.customRoom ? this.order.length : 0;
     /**
      * Spectator seats (opts.spectators / addSpectator): playerId → a stand-in every watch path treats like an eliminated
      * human (alive false; no PlayerState, never a field's player or authority).
@@ -540,7 +558,7 @@ export class Match {
 }
 
 // the method modules, in this order (a name defined twice is an error, never a silent override)
-for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSetupVote, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchRehearsal, MatchReports, MatchUnite, MatchBoss, MatchSettle, MatchTestCommands, MatchOffers]) {
+for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSetupVote, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchRehearsal, MatchReports, MatchUnite, MatchBoss, MatchSettle, MatchTestCommands, MatchOffers, MatchEndless]) {
   for (const key of Reflect.ownKeys(part.prototype)) {
     if (key === 'constructor') continue;
     if (Object.prototype.hasOwnProperty.call(Match.prototype, key)) throw new Error(`Match.${String(key)} is defined twice`);

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readPluginManifest } from '../../shared/plugins/manifest.js';
 import { issueList } from '../../shared/plugins/errors.js';
-import { fxObject as obj, fxId, fxPath, pluginFxProblems, ownsFxUnit, PLUGIN_FX_LIMITS as CAP } from '../../public/js/render/vfx/pluginFormat.js';
+import { fxObject as obj, fxId, fxPath, fxBindingId, pluginFxProblems, ownsFxUnit, PLUGIN_FX_LIMITS as CAP } from '../../public/js/render/vfx/pluginFormat.js';
 
 import { boundedFxJson, validateFxPrefab } from '../../public/js/render/vfx/pluginValidate.js';
 export { validateFxPrefab } from '../../public/js/render/vfx/pluginValidate.js';
@@ -51,7 +51,8 @@ export function readFxAssets(dir, config, owners, listed) {
   };
   for (const b of Object.values(config.flipbooks || {})) {
     const im = image(b.image);
-    check(im.w % b.cols === 0 && im.h % Math.ceil(b.frames / b.cols) === 0, 'flipbook cells must divide the image');
+    const rows = b.rows || Math.ceil(((b.start || 0) + b.frames) / b.cols);
+    check(im.w % b.cols === 0 && im.h % rows === 0 && (b.start || 0) + b.frames <= b.cols * rows, 'flipbook cells must divide the image');
   }
   const prefabs = {}, textures = {};
   let index = null;
@@ -81,6 +82,11 @@ export function readFxAssets(dir, config, owners, listed) {
       for (const k of ['startEffect', 'deadEffect']) check(u[k] === undefined || Object.hasOwn(prefabs, u[k]), 'invalid unit effect');
     }
   }
-  for (const skills of Object.values(config.bind || {})) for (const phases of Object.values(skills)) for (const id of Object.values(phases)) check(Object.hasOwn(prefabs, id) || Object.hasOwn(config.flipbooks || {}, id), `missing bound effect ${id}`);
+  const refs = [];
+  for (const targetTable of [config.bind, config.bindOperators, config.bindSkins, config.bindEnemies]) {
+    for (const skills of Object.values(targetTable || {})) for (const phases of Object.values(skills)) for (const binding of Object.values(phases)) refs.push(fxBindingId(binding));
+  }
+  for (const binding of Object.values(config.bindEvents || {})) refs.push(fxBindingId(binding));
+  for (const id of refs) check(Object.hasOwn(prefabs, id) || Object.hasOwn(config.flipbooks || {}, id), `missing bound effect ${id}`);
   return { files: [...used], value: { config, index, prefabs, textures, images, owners: [...owners] } };
 }

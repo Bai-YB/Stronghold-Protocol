@@ -764,8 +764,10 @@ export function resolveDetail(target, pieces, { priv = null, backups = data.get(
     const rec = c ? ownDiyRecord(c, priv, dd) : null;
     return rec ? { chess: rec, diy: ownDiyPick(priv, c) } : null;
   };
+  // `unowned` (a shop / reward offer or the ban list): no outfit — the card shows the operator's own art until the
+  // piece is actually fielded (docs/SKINS.md; the wardrobe is the owner's, not the catalogue's).
   const appearance = { ownerId: target.kind === 'unit' ? target.unit?.ownerId ?? null
-    : target.owner ?? (target.foreign ? null : priv?.playerId), skin: target.unit?.skin || null };
+    : target.owner ?? (target.foreign || target.unowned === true ? null : priv?.playerId), skin: target.unit?.skin || null };
   if (target.kind === 'piece') {
     const e = pieces?.get(target.uid);
     if (!e) return null;

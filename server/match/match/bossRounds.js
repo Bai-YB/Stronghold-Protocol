@@ -8,8 +8,9 @@
 import { PHASE, GEO } from '../../../shared/constants.js';
 import { createRng, deriveSeed } from '../../sim/rng.js';
 import { creditedKillsOf } from '../../sim/spec.js';
-import { buildBossWave, bountySpawns } from '../waves.js';
-import { pairPlayers, bossPairSalt, bossPoolHp, SharedBossPool, CreditPool, hiddenEligible, BOSS_HIT_STEPS } from '../finalAssault.js';
+import { buildBossWave, buildEndlessBossWave, bountySpawns } from '../waves.js';
+import { endlessGrowth, isEndlessDoubleBoss } from '../endless.js';
+import { pairPlayers, bossPairSalt, bossPoolHp, SharedBossPool, SharedBossPoolGroup, CreditPool, hiddenEligible, BOSS_HIT_STEPS } from '../finalAssault.js';
 import { FieldRunner, HeadlessPacer, syntheticResult, BOSS_SILENCE_MS, CATCHUP_TICKS_PER_INTERVAL } from '../fields.js';
 import { FLOW_TICKER_PRIORITY, BOSS_CLOCK_MS, DELAYS } from './common.js';
 
@@ -42,18 +43,29 @@ export class MatchBoss {
     if (!alive.length) { this.finish({ victory: false, reason: 'eliminated' }); return; }
     this.phase = hidden ? PHASE.HIDDEN_CORE : PHASE.FINAL_ASSAULT;
     this.lastResults = new Map();
-    if (!hidden) this._openTeamLp();
-    const bossId = hidden ? this.hiddenBossId : this.bossId;
+    const endlessRun = this.endlessActive();
+    if (!hidden && !endlessRun) this._openTeamLp();
+    const plannedBossIds = endlessRun
+      ? (this.endless.plannedBossRound === this.endless.round && Array.isArray(this.endless.plannedBossIds)
+        ? this.endless.plannedBossIds.slice() : this.endlessBossIds())
+      : [hidden ? this.hiddenBossId : this.bossId];
+    const bossIds = plannedBossIds.length ? plannedBossIds : [hidden ? this.hiddenBossId : this.bossId];
+    const bossId = bossIds[0];
     // BOSS_HIT tickers ("对敌方领袖造成的伤害超过20% / 50% / 80%"): the player's damage to THIS leader over its pool —
     // the pool's own per-player tally, one pool per boss round. stats.bossDamage (the result's 领袖伤害) adds up both
     // rounds, so it would credit the Final Assault's damage to the hidden leader ("隐藏boss还没打就出了50%播报").
     const hitSteps = new Map();
-    const pool = new SharedBossPool(bossPoolHp(this.gd, bossId, alive.length), {
-      onHit: (pid, dmg) => {
+    const growth = endlessRun ? endlessGrowth(this.endless.round, { boss: true, players: this.endless.seats }) : null;
+    const poolRows = bossIds.map((id) => {
+      const base = bossPoolHp(this.gd, id, alive.length) * (growth?.hpMul || 1);
+      const hp = base * (bossIds.length > 1 ? 0.65 : 1);
+      return [id, new SharedBossPool(hp, { onHit: (pid, dmg) => group ? group.noteHit(pid, dmg) : onHit(pid, dmg) })];
+    });
+    const onHit = (pid, dmg) => {
         const ps = this.players.get(pid);
         if (!ps) return;
         ps.stats.bossDamage += dmg;
-        const share = (pool.byPlayer.get(pid) || 0) / pool.maxHp;
+        const share = (this.bossPool.byPlayer.get(pid) || 0) / this.bossPool.maxHp;
         const done = hitSteps.get(pid) || 0;
         let reached = done;
         BOSS_HIT_STEPS.forEach((s, i) => { if (share >= s) reached = Math.max(reached, i + 1); });
@@ -61,16 +73,29 @@ export class MatchBoss {
           hitSteps.set(pid, reached);
           this.tickerFor('BOSS_HIT', [ps.name], { playerId: pid, param: String(BOSS_HIT_STEPS[reached - 1]) });
         }
-      },
-    });
+      };
+    let group = null;
+    if (bossIds.length > 1) group = new SharedBossPoolGroup(Object.fromEntries(poolRows), { onHit });
+    const pool = group || poolRows[0][1];
     this.bossPool = pool;
+    this.endlessBossPools = endlessRun ? Object.fromEntries(poolRows) : null;
+    if (endlessRun) {
+      this.endless.bossStartAt = this.sched.now();
+      this.endless.bossDrainCount = 0;
+      this.endless.boss = { ...(this.endless.boss || {}), round: this.endless.round, double: bossIds.length > 1,
+        bosses: bossIds.slice(), hp: pool.hp, maxHp: pool.maxHp, pools: pool.bossStatuses?.() || [], defeated: false };
+      this.endless.lastBossId = bossId;
+    }
     // the round's plan (_planBossWaves: the Hidden Core's own draw, GitHub #845); a departure since keeps intact pairs
     const groups = pairPlayers(alive, createRng(deriveSeed(this.seed, bossPairSalt(this.gd, this.round))), this.bossPairs);
     this.bossPairs = groups.map(g => g.map(p => p.playerId));
     const reuse = this.bossWaves && this.bossWaves.length === groups.length && this.bossWaves.every((w, i) => w.players.join() === groups[i].map((p) => p.playerId).join());
     this.fields = groups.map((g, i) => {
       const solo = this.isSolo || g.length === 1;
-      const wave = reuse ? this.bossWaves[i].wave : buildBossWave(this.gd, this.rngWaves, this.factions, this.round, { bossId, solo });
+      const wave = reuse ? this.bossWaves[i].wave : endlessRun
+        ? buildEndlessBossWave(this.gd, this.rngEndless, this.factions, this.endless.round,
+          { bossIds, solo, players: this.endless.seats })
+        : buildBossWave(this.gd, this.rngWaves, this.factions, this.round, { bossId, solo });
       // one spawn list per field, shared by the field's players' onBattleStart handlers (edit it in place)
       const spawns = wave.spawns.map((s) => ({ ...s, mods: s.mods ? { ...s.mods } : undefined }));
       // bounties with battles left (a multi-round card lasts MULTI_ROUND_BOUNTY_BATTLES) follow their player into the
@@ -101,8 +126,13 @@ export class MatchBoss {
         spawns: this._sanitizeSpawns(spawns),
         routes: wave.routes,
         sharedBoss: this.bossPool,
+        bossPools: endlessRun ? this.endlessBossPools : null,
+        bossPoolByEnemy: endlessRun ? wave.bossPoolByEnemy : null,
         // the round's enemy effects for the leaders' mid-fight summons (server/sim/content/bosses.js summonMods)
-        flags: { layerGainsEnabled: false, ...this.gd.dp, enemyScale: this.gd.enemyScale(this.round) },
+        flags: { layerGainsEnabled: false, ...this.gd.dp, enemyScale: this.gd.enemyScale(endlessRun ? this.gd.bossRound : this.round),
+          ...(endlessRun ? { layerCap: null, endlessDisableBossHitLimit: true, endlessHardControlCap: true,
+            endlessControlResist: wave.endless?.controlResist ?? growth.controlResist,
+            endlessLiveEnemyCap: growth.liveEnemyCap, endlessNoBossTimeout: true } : {}) },
         fieldId,
         enemyOverrides: wave.overrides,
         waveId: wave.templateId,
@@ -113,7 +143,7 @@ export class MatchBoss {
       try {
         battle.on('enemyLeak', (ctx) => this._bossLeak(ctx && ctx.enemy), { priority: -1000, owner: 'match' });
         // leader "扣除目标生命" effects (boss_7 Doom, 斥退 …: server/sim/content/bosses.js lpLoss) hit the team pool
-        battle.on('lpLoss', (ctx) => this._teamLpLoss(ctx && ctx.amount), { priority: -1000, owner: 'match' });
+        battle.on('lpLoss', (ctx) => this._teamLpLoss(ctx && ctx.amount, ctx && ctx.source), { priority: -1000, owner: 'match' });
       } catch (e) { this.reportError('boss leak hook', e); }
       return { fieldId, kind: hidden ? 'hidden' : 'boss', players: g.map((p) => p.playerId), battle, live: true };
     });
@@ -437,18 +467,38 @@ export class MatchBoss {
   }
 
   _bossLeak(enemy) {
+    if (this.endlessActive()) {
+      if (!enemy) return;
+      const target = this.players.get(enemy.ownerId) || this.alivePlayers()[0];
+      if (!target?.alive) return;
+      const loss = Number.isFinite(enemy.lpr) && enemy.lpr >= 0 ? enemy.lpr : 1;
+      target.lp = Math.max(0, target.lp - loss);
+      if (target.lp <= 0) { target.eliminate(this.round); this.tickerText(`${target.name}博士已被淘汰`, FLOW_TICKER_PRIORITY); }
+      target.dirty(); this.markPublic();
+      return;
+    }
     if (!enemy || this.teamLp == null) return;
     // lifePointReduce from data: 0 for harmless enemies (e.g. 装置 / unharmful escorts), 1 when absent
     const lpr = Number.isFinite(enemy.lpr) && enemy.lpr >= 0 ? enemy.lpr : 1;
     this._teamLpLoss(lpr);
   }
 
-  _teamLpLoss(amount) {
+  _teamLpLoss(amount, source = null) {
+    if (this.endlessActive()) {
+      const key = source?.id != null ? String(source.id) : 'global';
+      const now = this.sched.now();
+      if (!this.endless.lpLossCooldown) this.endless.lpLossCooldown = new Map();
+      if (now - (this.endless.lpLossCooldown.get(key) ?? -Infinity) < 10_000) return;
+      this.endless.lpLossCooldown.set(key, now);
+      for (const ps of this.alivePlayers()) { ps.lp = Math.max(0, ps.lp - 4); ps.dirty(); if (ps.lp <= 0) ps.eliminate(this.round); }
+      this.markPublic();
+      return;
+    }
     const n = Number(amount);
     if (this.teamLp == null || !Number.isFinite(n) || !(n > 0)) return;
     this.teamLp = Math.max(0, this.teamLp - n);
     if (this._bossLazyPublic()) { this._bossPublic(); return; }
-    this._syncTeamLp();
+    if (!this.endlessActive()) this._syncTeamLp();
     this.markPublic();
   }
 
@@ -499,6 +549,22 @@ export class MatchBoss {
    * (bossTurnHpReduceTime, gamedata.js bossOvertimeDue).
    */
   _applyOvertime(gt) {
+    if (this.endlessActive()) {
+      const elapsed = Math.max(0, Number(gt) || 0) / Math.max(0.01, this.gameSpeed);
+      let due = 0;
+      if (elapsed >= 180) due = 13 + Math.floor((elapsed - 180) / 2);
+      else if (elapsed >= 120) due = 1 + Math.floor((elapsed - 120) / 5);
+      const next = Math.max(0, Math.trunc(due));
+      const applied = Math.max(0, Math.trunc(this.endless.bossDrainCount || 0));
+      const alive = this.alivePlayers();
+      const maxLp = alive.reduce((max, ps) => Math.max(max, Math.max(0, ps.lp)), 0);
+      const drain = Math.min(Math.max(0, next - applied), maxLp);
+      if (drain > 0) {
+        this.endless.bossDrainCount = applied + drain;
+        for (const ps of alive) { ps.lp = Math.max(0, ps.lp - drain); ps.dirty(); if (ps.lp <= 0) ps.eliminate(this.round); }
+      }
+      return;
+    }
     const due = this.gd.bossOvertimeDue(gt, this.bossOvertimeStartReal);
     if (due > this.overtimeApplied) {
       const loss = due - this.overtimeApplied;
@@ -509,7 +575,13 @@ export class MatchBoss {
 
   _bossTick(runner) {
     this._applyOvertime(runner.time);
-    if (this.teamLp <= 0 && this.bossPool.hp > 0) runner.forceAll('forced');
+    if (this.endlessActive() && this.bossPool?.maxHp > 0) {
+      this.endless.progress = Math.max(0, Math.min(1, 1 - this.bossPool.hp / this.bossPool.maxHp));
+    }
+    if (this.endlessActive() && !this.alivePlayers().length && this.bossPool.hp > 0) {
+      this._finalEnding = 'forced'; runner.forceAll('forced');
+    }
+    if (!this.endlessActive() && this.teamLp != null && this.teamLp <= 0 && this.bossPool.hp > 0) runner.forceAll('forced');
     // client-side combat with every boss field on the server: humans that reconnect / watch run display replicas
     // whose LocalBossPool follows b.pool
     if (this.fields.some((f) => f.cc)) { this._broadcastPool(false); this._bossPublic(); }
@@ -552,11 +624,23 @@ export class MatchBoss {
         if (pp && ps) this.dispatch(ps, 'onBattleResult', { result: pp, lpLoss: 0, perfect: !!pp.perfect, boss: true });
       }
     }
-    this._syncTeamLp();
+    if (!this.endlessActive()) this._syncTeamLp();
     this.deadline = 0;
     this.overtimeAt = 0;
     this.markPublic();
     this.runner = null;
+    if (this.endlessActive()) {
+      if (!victory) {
+        this.later(this.scaled(DELAYS.SETTLE), () => this.finish({ victory: false, reason: this.alivePlayers().length ? 'boss_defeat' : 'eliminated' }));
+      } else {
+        this.later(this.scaled(DELAYS.SETTLE), () => {
+          this._endlessBossReward();
+          if (!this.alivePlayers().length) this.finish({ victory: false, reason: 'eliminated' });
+          else this.offerEndlessProtocols('boss');
+        });
+      }
+      return;
+    }
     if (!hidden) {
       const eligible = victory && !!this.hiddenBossId && hiddenEligible(this.gd, { layerSum: this.hiddenLayerSum, teamLp: this.teamLp });
       this.later(this.scaled(DELAYS.SETTLE), () => {
@@ -565,12 +649,21 @@ export class MatchBoss {
           this.bossPool = null;
           this.tickerText('隐秘核心已解锁', FLOW_TICKER_PRIORITY);
           this.startRound(this.gd.hiddenRound);
+        } else if (this.runKind === 'endless' && victory) {
+          this.beginEndless(false);
         } else {
           this.finish({ victory, reason: victory ? 'victory' : 'defeat' });
         }
       });
     } else {
-      this.later(this.scaled(DELAYS.SETTLE), () => this.finish({ victory: true, hiddenCleared: victory, reason: 'victory' }));
+      this.later(this.scaled(DELAYS.SETTLE), () => {
+        // Vanilla keeps upstream's report: a lost 隐秘核心 still ends the run as 通关 (`victory: true`, `hiddenCleared`
+        // says whether the leader fell) — golden matches/coop4-ABYSS pins it. Only endless turns it into a run end.
+        if (this.runKind === 'endless') {
+          if (victory) this.beginEndless(true);
+          else this.finish({ victory: false, hiddenCleared: false, reason: 'hidden_failed' });
+        } else this.finish({ victory: true, hiddenCleared: victory, reason: 'victory' });
+      });
     }
   }
 }

@@ -1,8 +1,8 @@
 // server/match/unite.js — 联防 (Unite) planning and LP attribution (DESIGN §6.1, research 06 §5, research 08 §5).
 //
 // Trigger (co-op only): after the normal combats, ≥ 1 alive player leaked (a counted leak ⇒ not perfect) and
-// ≥ 1 alive player was perfect. Helpers (PRTS 卫戍协议/帮助 §联防阶段): up to config.unite.maxHelpers (2) perfect
-// players chosen by most units on the field (downed included) > has an active bond (存疑) > most undowned units, then
+// ≥ 1 alive player was perfect. Ordinary helpers (PRTS 卫戍协议/帮助 §联防阶段): up to config.unite.maxHelpers (2) perfect players chosen by
+// most units on the field (downed included) > has an active bond (存疑) > most undowned units, then
 // seat; with 2 helpers the one ranked first by most units > active bond > Σ active bond layers (存疑) > most undowned
 // units "率先迎敌" on the RIGHT-hand field (colOffset +8, where the escaped_multi routes enter), the other keeps the
 // left half (colOffset 0); a lone helper plays escaped_single on its own field. The field is the round's battlefield —
@@ -36,12 +36,14 @@
 // at birth (sim/battle/spawns.js) and neither uniteSurvivors nor the HUD's ×N reads it.
 
 import { buildUniteWave } from './waves.js';
+import { createRng, deriveSeed } from '../sim/rng.js';
 import { layerGainRoom } from '../../shared/constants.js';
+import { randomPlayerGroups } from './playerGroups.js';
 
 /**
  * @param {import('./Match.js').Match} m
  * @param {Map<string, object>} results playerId → BattleResult.perPlayer entry of the player's own combat
- * @returns {null | { helpers: any[], leakers: any[], leaked: object[], notReentered: Map<string, number> }}
+ * @returns {null | { helpers: any[], leakers: any[], leaked: object[], notReentered: Map<string, number>, groups?: object[] }}
  */
 export function planUnite(m, results) {
   if (m.isSolo) return null;
@@ -56,7 +58,7 @@ export function planUnite(m, results) {
     else if (r.perfect !== false) perfects.push(ps);
   }
   if (!leakers.length || !perfects.length) return null;
-  const helpers = helperOrder(m, perfects, results);
+  const helpers = m.customRoom ? null : helperOrder(m, perfects, results);
   const leaked = [];
   const notReentered = new Map();
   for (const ps of leakers) {
@@ -79,6 +81,18 @@ export function planUnite(m, results) {
       leaked.push({ enemyKey: l.enemyKey, mods: l.mods ? { ...l.mods } : null, lpr: l.lpr ?? 1, sourcePlayerId: ps.playerId, tag: l.tag ?? null, bounty });
     }
   }
+  if (m.customRoom) {
+    const rng = createRng(deriveSeed(m.seed, `unite-groups:${m.round}`));
+    // Keep custom rooms of four or fewer on their existing rules. The larger-room mod changes only 5+ seat matches:
+    // one pair below ten occupied seats, two pairs from ten onward. Room capacity alone must not raise the difficulty.
+    const plannedGroups = randomPlayerGroups(perfects, 2, rng);
+    const groups = (m.order.length > 4
+      ? plannedGroups.slice(0, m.order.length >= 10 ? 2 : 1)
+      : plannedGroups)
+      .map((pair, i) => ({ id: `g${i + 1}`, fieldId: `u:${i + 1}`, helpers: pair, leaked: [] }));
+    for (let i = 0; i < leaked.length; i++) groups[i % groups.length].leaked.push(leaked[i]);
+    return { helpers: groups.flatMap((g) => g.helpers), leakers, leaked, notReentered, groups };
+  }
   return { helpers, leakers, leaked, notReentered };
 }
 
@@ -98,7 +112,8 @@ export function helperStats(m, ps, results) {
     active = true;
     const stored = Number(ps.layers && ps.layers[id]) || Number(b.layers) || 0;
     const gain = pending && Number(pending[id]);
-    const add = Number.isFinite(gain) && gain > 0 ? layerGainRoom(stored, Math.floor(gain)) : 0;
+    const add = Number.isFinite(gain) && gain > 0
+      ? layerGainRoom(stored, Math.floor(gain), m.endlessActive?.() ? null : undefined) : 0;
     layers += stored + add;
   }
   const r = results && typeof results.get === 'function' ? results.get(ps.playerId) : null;
@@ -154,6 +169,28 @@ export function uniteBattleOpts(m, plan, timeLimit) {
   return { wave, players };
 }
 
+/** Combine the independently simulated custom-room fallback fields for settlement and player rewards. */
+export function combineUniteResults(plan, fields) {
+  const resultsByGroup = new Map((Array.isArray(fields) ? fields : []).map((f) => [f.groupId, f.result || null]));
+  const groups = [];
+  const perPlayer = {};
+  let allSynthetic = true;
+  for (const group of plan.groups || []) {
+    const result = resultsByGroup.get(group.id) || null;
+    groups.push({ id: group.id, result });
+    if (result && !result.synthetic) allSynthetic = false;
+    for (const [pid, source] of Object.entries(result?.perPlayer || {})) {
+      if (!source || typeof source !== 'object') continue;
+      const target = perPlayer[pid] || (perPlayer[pid] = { coins: 0, damageDealt: 0, killed: 0, creditedKills: 0, unitStats: [] });
+      for (const key of ['coins', 'damageDealt', 'killed', 'creditedKills']) {
+        if (Number.isFinite(Number(source[key]))) target[key] += Number(source[key]);
+      }
+      if (Array.isArray(source.unitStats)) target.unitStats.push(...source.unitStats);
+    }
+  }
+  return { groups, perPlayer, synthetic: allSynthetic };
+}
+
 /**
  * LP loss per leaker after the unite battle: survivors by source (+ unspawned re-entries + not re-entered leaks),
  * capped per round. Only what the wave sent IN: a leak the field itself produced (`uniteRuntime` — a split child or a
@@ -163,6 +200,30 @@ export function uniteBattleOpts(m, plan, timeLimit) {
 export function uniteSurvivors(plan, uniteResult) {
   const out = new Map();
   for (const [pid, n] of plan.notReentered) out.set(pid, (out.get(pid) || 0) + n);
+  if (Array.isArray(plan.groups)) {
+    const results = new Map((uniteResult && uniteResult.groups || []).map((g) => [g.id, g.result]));
+    for (const group of plan.groups) {
+      const result = results.get(group.id);
+      if (!result || result.synthetic) {
+        for (const leak of group.leaked) {
+          const pid = leak.sourcePlayerId;
+          if (pid) out.set(pid, (out.get(pid) || 0) + 1);
+        }
+        continue;
+      }
+      const perPlayer = result.perPlayer || {};
+      for (const pp of Object.values(perPlayer)) {
+        for (const l of (pp && pp.leaked) || []) {
+          if (!l || l.counted === false || l.uniteRuntime || !l.sourcePlayerId) continue;
+          out.set(l.sourcePlayerId, (out.get(l.sourcePlayerId) || 0) + 1);
+        }
+      }
+      for (const u of result.unspawned || []) {
+        if (u && u.sourcePlayerId) out.set(u.sourcePlayerId, (out.get(u.sourcePlayerId) || 0) + 1);
+      }
+    }
+    return out;
+  }
   const perPlayer = (uniteResult && uniteResult.perPlayer) || {};
   for (const pp of Object.values(perPlayer)) {
     for (const l of (pp && pp.leaked) || []) {

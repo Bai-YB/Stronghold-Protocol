@@ -1,8 +1,8 @@
 /* ==========================================================================================
    screens/lobby.css — the hub (official entry backdrop, the emblem in its radar and the title, 成就统计 / 密钥加入 /
    作战提示 at the left, the light S.W.E.E.P.报告 / 干员调配 plates at the right, the 独立模拟 / 同盟模拟 entries at the
-   bottom right), and the two full-screen dialogs (the project's Modal): 选择模拟协议 (official picture, difficulty cards
-   with the 已选定 stamp, 开始独立模拟 — or the room's 确认 / read-only view) and 选择同盟方式 (radar, 创建同盟 and 加入同盟
+   bottom right), and the two full-screen dialogs (the project's Modal): 选择模拟协议 (official picture, compact v0.3.1 difficulty cards
+   with a colour rail and check, 开始独立模拟 — or the room's 确认 / read-only view) and 选择同盟方式 (radar, 创建同盟 and 加入同盟
    cards). Text follows 文字大小 (calc(k * var(--t))).
    ========================================================================================== */
 
@@ -56,6 +56,34 @@
   mask-image: radial-gradient(70% 70% at 50% 50%, #000 30%, transparent 85%);
 }
 .lobby-hub .topbar { background: linear-gradient(180deg, rgba(4, 8, 8, .85), transparent); border-bottom: 0; }
+
+/* Match the previous selection page: live player count beside ping, with a direct public status shortcut. */
+.lobby-screen .server-online {
+  display: inline-flex; flex: none; align-items: center; gap: .055rem;
+  height: .32rem; padding: 0 .1rem;
+  border: 1px solid var(--line); border-radius: 99px; background: rgba(0, 0, 0, .5);
+  color: var(--mint-400); font-family: var(--font-num); font-size: calc(.15 * var(--t));
+  font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.lobby-screen .server-online__dot { width: .055rem; height: .055rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 .08rem currentColor; flex: none; }
+.lobby-screen .server-online__label { font-family: var(--font-ui); font-size: calc(.12 * var(--t)); color: var(--text-lo); font-weight: 500; }
+.lobby-status {
+  display: inline-flex; flex: none; align-items: center; justify-content: center; gap: .08rem;
+  min-height: .46rem; padding: .05rem .12rem;
+  border: 1px solid var(--line-2); color: var(--mint-500); background: rgba(0, 0, 0, .22);
+  font-size: calc(.14 * var(--t)); line-height: 1.3; text-decoration: none; white-space: nowrap;
+  transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
+}
+.lobby-status .icon { flex: none; width: .18rem; height: .18rem; }
+.lobby-status__label { flex: none; }
+.lobby-status:hover, .lobby-status:focus-visible { color: var(--mint-400); border-color: var(--mint-700); background: rgba(23, 249, 183, .06); }
+.lobby-status:focus-visible { outline: 2px solid var(--mint-400); outline-offset: 2px; }
+.sp-coarse .lobby-status { min-height: max(.56rem, 40px); }
+@media (max-width: 760px) {
+  .lobby-status { width: .46rem; min-width: .46rem; padding: .05rem; }
+  .lobby-status__label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .sp-coarse .lobby-status { width: max(.56rem, 40px); min-width: max(.56rem, 40px); }
+}
 
 /* ---- 大厅背景与音乐 (PR #643 split 8, ui/lobbyMedia.js): the player's own picture / video over the official layers,
    darkened by its 暗度 (--own-dim) so the title and the entries stay readable; the dialog reuses the settings rows ---- */
@@ -165,6 +193,7 @@
   .hub-scene * { animation: none; }
   .hub-scene .hub-bg__mote { opacity: .3; }
 }
+
 /* the scene buttons of 大厅背景与音乐 */
 .bgset__themes { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .1rem; }
 .bgset__theme {
@@ -195,7 +224,7 @@
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 4rem) minmax(0, 1fr) minmax(0, calc(var(--hub-entry-w) * 2 + var(--hub-gap)));
+  grid-template-columns: minmax(0, 4rem) minmax(0, 1fr) minmax(0, calc(var(--hub-entry-w) * 3 + var(--hub-gap) * 2));
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas: "side center right" "side entries entries";
   gap: .2rem .4rem;
@@ -420,6 +449,7 @@
 .hub-entry-wrap:nth-child(2) { animation-delay: 60ms; }
 .hub-entry__group { display: flex; align-items: center; gap: .06rem; min-height: .22rem; padding-left: .04rem; font-size: calc(.13 * var(--t)); color: rgba(223, 230, 226, .7); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hub-entry__group .icon { flex: none; width: .16rem; height: .16rem; color: var(--mint-400); }
+.hub-entry__rank { margin-left: auto; padding: .015rem .05rem; border: 1px solid rgba(101, 207, 177, .42); border-radius: 999px; background: rgba(7, 18, 15, .72); color: #b4ebd8; font-size: .1rem; line-height: 1.4; cursor: pointer; }
 .hub-entry__long { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .hub-entry__short { display: none; }
 /* Narrow desktop windows keep the full descriptions (phones have their own short labels below).
@@ -469,6 +499,19 @@
 .hub-entry--coop .hub-entry__en { color: rgba(4, 20, 15, .75); }
 .hub-entry--coop .hub-entry__icon { color: rgba(4, 20, 15, .25); }
 .hub-entry--coop .hub-entry__corner { background: linear-gradient(135deg, transparent 50%, #e8fff7 50%); }
+.hub-entry--matchmaking { background: linear-gradient(155deg, #247d82, #123d4c 58%, #171f29); color: #e6fbf8; border-color: #57d3c4; }
+.hub-entry--matchmaking .hub-entry__en { color: #7be3d5; }
+.hub-entry--matchmaking .hub-entry__icon { color: rgba(123, 227, 213, .32); }
+.hub-entry--matchmaking .hub-entry__corner { background: linear-gradient(135deg, transparent 50%, #a0fff0 50%); }
+.endless-board .modal__box { background: linear-gradient(160deg, #13221f, #080f12); border-color: rgba(115, 229, 207, .45); }
+.endless-board__tabs, .endless-board__filters { display: flex; gap: .08rem; margin: .14rem 0; }
+.endless-board__tabs button, .endless-board__filters button { flex: 1; min-height: .32rem; border: 1px solid rgba(175, 205, 198, .2); border-radius: .06rem; background: rgba(4, 10, 12, .72); color: #b8c9c7; cursor: pointer; }
+.endless-board__tabs button.is-active, .endless-board__filters button.is-active { border-color: #72dfcc; color: #9cf5e2; background: rgba(45, 121, 109, .25); }
+.endless-board__list { display: grid; gap: .045rem; max-height: 4.5rem; overflow: auto; padding: 0; list-style: none; }
+.endless-board__list li { display: grid; grid-template-columns: .3rem 1fr auto; align-items: center; gap: .1rem; padding: .1rem; border-bottom: 1px solid rgba(190, 220, 215, .1); color: #eef4f1; }
+.endless-board__list li > b { color: #84e8d4; }
+.endless-board__list small { color: #99aaa8; }
+.endless-board__empty { padding: .3rem .1rem; color: #9eaeaa; text-align: center; }
 @keyframes card-in { from { opacity: 0; transform: translateY(.14rem); } }
 
 /* ---- tips -------------------------------------------------------------------------------------------- */
@@ -838,6 +881,8 @@
 .ally-side { min-height: 0; display: flex; flex-direction: column; gap: .2rem; padding: .1rem 0 .1rem .3rem; }
 .ally-side > :first-child { margin-top: auto; }
 .ally-side > :last-child { margin-bottom: auto; }
+.ally-custom-action { display: flex; flex-direction: column; align-items: stretch; gap: .06rem; }
+.ally-custom-action small { text-align: center; font-size: calc(.13 * var(--t)); }
 .ally-card {
   position: relative;
   flex: none;
@@ -1025,7 +1070,7 @@ button.ally-card:disabled .ally-card__bar { filter: grayscale(.5) brightness(.8)
      (at 2.1rem, 84 px, 「Simulation」 was 95 px at 小). [ASSUMED] the width */
   .lobby-hub { --hub-entry-w: max(2.1rem, 32px, calc(128px * var(--sp-ui, 1))); }
   .hub-stage {
-    grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--hub-entry-w) * 2 + var(--hub-gap)));
+    grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--hub-entry-w) * 3 + var(--hub-gap) * 2));
     grid-template-areas: "center right" "entries entries";
     gap: .14rem .3rem;
     padding: .1rem .4rem .24rem;

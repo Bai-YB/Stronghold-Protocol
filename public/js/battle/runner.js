@@ -87,6 +87,7 @@ import { net as appNet } from '../net.js';
 import { store as appStore } from '../store.js';
 import { contentFor as appContentFor, simContent as appSimContent, contentSet as appContentSet } from '../content.js';
 import { fxForm } from '../../../shared/protocol.js';
+import { MAX_ROOM_SEATS } from '../../../shared/constants.js';
 import { spectateEffects } from './observe.js';
 import { recordError, setBattleSource } from '../diag.js';
 import { loadBrowserSim } from './simLoader.js';
@@ -311,7 +312,12 @@ export function createBattleRunner(deps) {
       if (!content || content.cs !== want) throw new Error(`the content set ${want.slice(0, 8)} is not loaded on this page`);
       // a gameplay plugin set runs in the plugin Worker; an official version's set (DESIGN §35.23: data only, no script)
       // runs on this page like the original content — 作战统计 included
-      return deps.loadSim || content.version ? loadSim(content) : { content, cs: want, remote: true };
+      // the room state says the set is plain data (no scripts, no rules): simulate it here, like an official version's
+      // data set. Read from the room, not only from the set's index — that document is content-addressed and may sit in
+      // the browser cache from before the flag existed.
+      const roomContent = store?.get?.()?.room?.content;
+      const plain = content.dataOnly === true || (roomContent && roomContent.cs === want && roomContent.dataOnly === true);
+      return deps.loadSim || content.version || plain ? loadSim(content) : { content, cs: want, remote: true };
     }) : loadSim(null)).catch((err) => { if (simP === p) { simP = null; simCs = null; } throw err; });
     simP = p;
     return p;
@@ -542,13 +548,13 @@ export function createBattleRunner(deps) {
       msg.bossDmg = pool && Number.isFinite(pool.cum) ? pool.cum : 0;
       if (pool && pool.byPlayer) {
         const by = {};
-        for (const pid of Object.keys(pool.byPlayer).slice(0, 4)) by[pid] = pool.byPlayer[pid];
+        for (const pid of Object.keys(pool.byPlayer).slice(0, MAX_ROOM_SEATS)) by[pid] = pool.byPlayer[pid];
         msg.by = by;
       }
     } else {
       msg.leaks = Math.min(1e6, p.leaks);
-      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, ≤ 4 players)
-      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, 4));
+      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, ≤ 20 seats)
+      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, MAX_ROOM_SEATS));
     }
     try { net.send('b.progress', msg); } catch { /* offline */ }
   }

@@ -171,6 +171,7 @@
 .gtop__half--l { margin-right: -.06rem; transform-origin: 100% 50%; }
 .gtop__half--r { margin-left: -.06rem; transform-origin: 0 50%; }
 .gtop__half .roundbox { gap: .12rem; }
+.roundbox__endless { color: #91e9d8; font-size: .11rem; letter-spacing: .04em; white-space: nowrap; }
 /* the round chip and the LP keep plain rem: HUD chrome in boxes the design fixed (test/ui/text-scale.test.js NOT_SCALED) */
 .gtop__half .roundbox__label { font-size: .2rem; color: #d8dcdc; letter-spacing: .1em; }
 .gtop__half .roundbox__num { display: inline-grid; place-items: center; min-width: .48rem; height: .34rem; padding: 0 .07rem; font-size: .28rem; line-height: 1;
@@ -385,6 +386,11 @@
 .bossbar { position: relative; flex: 1; min-width: 2.2rem; height: .2rem; background: rgba(0, 0, 0, .6); border: 1px solid rgba(255, 122, 51, .5); overflow: hidden; }
 .bossbar__fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #b8340d, var(--orange-hi)); box-shadow: 0 0 .1rem rgba(255, 110, 40, .8); transition: width 300ms var(--ease-out); }
 .bossbar__txt { position: absolute; inset: 0; display: grid; place-items: center; font-size: .14rem; font-weight: 700; color: #fff; text-shadow: 0 1px 2px #000; }
+.bossbar-group { display: grid; flex: 1; min-width: 2.8rem; gap: .025rem; }
+.bossbar__row { display: grid; grid-template-columns: .48rem minmax(1.8rem, 1fr); align-items: center; gap: .04rem; }
+.bossbar__row small { color: #ffcfaa; font-size: .09rem; white-space: nowrap; }
+.bossbar--mini { min-width: 0; height: .12rem; }
+.bossbar--mini .bossbar__txt { font-size: .09rem; }
 
 /* LP tower */
 .lp { display: inline-flex; align-items: center; gap: .05rem; color: var(--mint-400); white-space: nowrap; }
@@ -526,7 +532,39 @@
 
 /* ---- team panel ------------------------------------------------------------------------------------------- */
 .team { position: absolute; left: .22rem; top: 2.36rem; display: flex; flex-direction: column; gap: .14rem; pointer-events: none; }
-.team__row { position: relative; display: flex; align-items: center; gap: .1rem; pointer-events: auto; }
+/* Custom rooms can exceed the original four-player strip. Make that list itself the scroll target so
+   wheel/trackpad input and the scrollbar can reach every clickable player row. */
+.team--many {
+  z-index: 5;
+  pointer-events: auto;
+  /* Stop above the bottom-left 交流 / 设置 controls instead of letting a long roster cover them. */
+  max-height: max(0px, calc(100% - 3.4rem)); overflow-x: hidden; overflow-y: scroll; overscroll-behavior: contain;
+  touch-action: pan-y; -webkit-overflow-scrolling: touch;
+  /* The own-player marker, team frame and status glow sit just outside the avatar bounds. Keep
+     breathing room inside the scrollport so its overflow clip never cuts those pieces off. */
+  box-sizing: border-box;
+  padding: .12rem .14rem .14rem .12rem;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(79, 232, 192, .82) rgba(255, 255, 255, .08);
+  background: linear-gradient(90deg, rgba(8, 11, 10, .34), rgba(8, 11, 10, .08));
+  outline: none;
+}
+.team--many:focus-visible { box-shadow: inset 0 0 0 1px rgba(79, 232, 192, .55); }
+.team--many::-webkit-scrollbar { width: 9px; }
+.team--many::-webkit-scrollbar-track { background: rgba(255, 255, 255, .08); }
+.team--many::-webkit-scrollbar-thumb { background: rgba(79, 232, 192, .82); border: 2px solid rgba(8, 11, 10, .8); border-radius: 999px; }
+.team__unite-group { pointer-events: auto; margin: 0 .02rem; border: 1px solid rgba(79, 232, 192, .24); background: rgba(5, 24, 20, .52); }
+.team__unite-summary { display: flex; align-items: center; gap: .08rem; min-height: .34rem; padding: .03rem .08rem; cursor: pointer; list-style: none;
+  border-bottom: 1px solid rgba(79, 232, 192, .18); background: linear-gradient(90deg, rgba(30, 107, 85, .42), rgba(8, 11, 10, .2)); }
+.team__unite-summary::-webkit-details-marker { display: none; }
+.team__unite-mark { display: grid; place-items: center; color: var(--mint-400); transition: transform var(--t-fast); }
+.team__unite-mark .icon { width: .16rem; height: .16rem; }
+.team__unite-group[open] .team__unite-mark { transform: rotate(90deg); }
+.team__unite-label { color: var(--mint-400); font-size: .12rem; font-weight: 700; letter-spacing: .04em; }
+.team__unite-count { display: grid; place-items: center; min-width: .2rem; height: .2rem; margin-left: auto; padding: 0 .04rem; color: var(--text-hi);
+  font-size: .11rem; background: rgba(4, 18, 15, .68); border: 1px solid rgba(79, 232, 192, .28); }
+.team__unite-members { display: flex; flex-direction: column; gap: .14rem; margin-left: .1rem; padding: .1rem 0 .08rem .12rem; border-left: 1px solid rgba(79, 232, 192, .3); }
+.team__row { position: relative; display: flex; flex: 0 0 auto; align-items: center; gap: .1rem; pointer-events: auto; }
 .team__btn {
   position: relative; padding: 0; background: none; border: 0;
   transition: transform var(--t-fast);
@@ -1148,6 +1186,19 @@
 @keyframes gtop-from-l { from { opacity: 0; transform: translateX(-.4rem); } }
 @keyframes gtop-from-r { from { opacity: 0; transform: translateX(.4rem); } }
 @keyframes gtop-rise { from { opacity: 0; transform: translateY(.4rem); } }
+.endless-pick { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: max(.18rem, 4vw); background: rgba(2, 7, 9, .78); backdrop-filter: blur(6px); }
+.endless-pick__panel { width: min(8.8rem, 96vw); padding: clamp(.2rem, 3vw, .42rem); color: #e9f5f2; border: 1px solid rgba(107, 229, 207, .6); background: linear-gradient(145deg, rgba(17, 39, 39, .98), rgba(6, 13, 18, .98)); box-shadow: 0 .12rem .6rem rgba(0, 0, 0, .6), inset 0 0 .3rem rgba(88, 209, 188, .1); }
+.endless-pick__panel > small { color: #8ee8d7; font: 700 .12rem/1.4 ui-monospace, monospace; letter-spacing: .16em; }
+.endless-pick__panel h2 { margin: .08rem 0; font-size: clamp(.24rem, 4vw, .38rem); }
+.endless-pick__panel p { margin: 0 0 .18rem; color: #a8bbb9; font-size: clamp(.13rem, 2vw, .18rem); }
+.endless-pick__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .1rem; }
+.endless-pick__cards button { min-height: 1.3rem; display: flex; flex-direction: column; align-items: flex-start; gap: .12rem; padding: .16rem; text-align: left; color: #e8f7f3; border: 1px solid rgba(130, 197, 184, .3); background: linear-gradient(155deg, rgba(30, 64, 64, .82), rgba(8, 19, 23, .95)); cursor: pointer; }
+.endless-pick__cards button:hover, .endless-pick__cards button:focus-visible { border-color: #7eebd3; box-shadow: inset 0 0 .2rem rgba(112, 229, 207, .15); }
+.endless-pick__cards button:disabled { opacity: .5; cursor: default; }
+.endless-pick__cards b { font-size: clamp(.17rem, 2.4vw, .23rem); color: #a0f2df; }
+.endless-pick__cards span { color: #c2d1ce; line-height: 1.5; font-size: clamp(.12rem, 1.8vw, .15rem); }
+.endless-pick__watch { display: block; margin-top: .16rem; color: #efc47c; }
+@media (max-width: 680px) { .endless-pick__cards { grid-template-columns: 1fr; max-height: 55vh; overflow: auto; } .endless-pick__cards button { min-height: .78rem; } }
 @media (prefers-reduced-motion: reduce) {
   .gtop__half .roundbox__num, .gm__hud.is-enter .gtop__cap, .gm__hud.is-enter .gtop__half, .gm__hud.is-enter .gtop__deco,
   .gm__hud.is-enter .gtop__plus, .gm__hud.is-enter .gtop__frame--l, .gm__hud.is-enter .gtop__frame--r, .gm__hud.is-enter .gtop__left, .gm__hud.is-enter .gtop__right,

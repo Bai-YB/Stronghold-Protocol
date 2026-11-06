@@ -43,6 +43,7 @@ export class MatchIntents {
       // the host applies the declared primitive, a plugin never reaches the match state itself
       case 'g.offer': return this.requestOffer(ps, msg.offerId, msg.idx, msg);
       case 'g.offerRefresh': return this.requestOfferRefresh(ps, msg.offerId, msg.idx, msg);
+      case 'g.endlessPick': return this.pickEndlessProtocol(ps, msg.protocolId);
       case 'g.ready': return ps.setReady(!!msg.ready);
       case 'g.emote': return this.emote(ps, msg.id);
       // playerId: the player tapped (a shared field names two) — the watch preference (item 56)
@@ -76,6 +77,7 @@ export class MatchIntents {
   setAutoplay(ps, on) {
     if (ps.autoplay === on) return OK;
     ps.autoplay = on;
+    if (on && this.endless) this.endless.usedAI = true;
     this.markPublic();
     if (on) this.kickBot(ps);
     return OK;
@@ -125,7 +127,9 @@ export class MatchIntents {
     const units = [];
     // the flags of the battle it previews: a normal round gains IN_BATTLE layers from its start (a <战斗开始时> layer gain
     // raises bond stats at t = 0 there too); the Final Assault / Hidden Core fight without (previewed as a normal field)
-    const bossRound = this.round === this.gd.bossRound || this.round === this.gd.hiddenRound;
+    const endlessBossRound = this.endlessActive() && Number.isInteger(this.endless?.round)
+      && this.endless.round > 0 && this.endless.round % 7 === 0;
+    const bossRound = endlessBossRound || this.round === this.gd.bossRound || this.round === this.gd.hiddenRound;
     const b = this.newBattle({
       seed: deriveSeed(this.seed, `preview:${this.round}:${ps.seat}`), kind: 'normal', modeId: this.modeId, round: this.round,
       stageId: this.stageId, rect: { ...GEO.NORMAL_RECT }, timeLimit: 60, players, spawns: [], routes: this.wave ? this.wave.routes : [],

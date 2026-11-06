@@ -104,6 +104,24 @@ export function createRoomSets({ registry, visual, contents, policy }) {
       const normalized = normalizeSettings(p.manifest.settings, settings[p.id]);
       return { id: p.id, version: p.manifest.version, class: p.class, ...(p.script ? { execution: cset?.execution } : {}), ...(Object.keys(normalized).length ? { settings: normalized } : {}), hash: String(src?.hash || '').slice(0, 16), ...(auto.has(p.id) ? { auto: true } : {}) };
     });
+    const roomOptions = {};
+    const roomOwners = {};
+    for (const p of entries) {
+      const declaration = p.manifest.room;
+      if (!declaration) continue;
+      const values = normalizeSettings(p.manifest.settings, settings[p.id]);
+      const next = {
+        ...(declaration.capacity ? { capacity: values[declaration.capacity] } : {}),
+        ...(declaration.untimedChoices ? { untimedChoices: values[declaration.untimedChoices] } : {}),
+      };
+      for (const [key, value] of Object.entries(next)) {
+        if (Object.hasOwn(roomOptions, key) && roomOptions[key] !== value) {
+          return { error: ERR.PLUGIN_BLOCKED, detail: `${roomOwners[key]} and ${p.id} set room.${key} differently` };
+        }
+        roomOptions[key] = value;
+        roomOwners[key] = p.id;
+      }
+    }
     return {
       ok: true,
       set: {
@@ -115,7 +133,9 @@ export function createRoomSets({ registry, visual, contents, policy }) {
         warnings: [...(vset?.warnings || []), ...warnings],
         bytes: vset ? vset.bytes : 0,
         ...(cset ? { dataBytes: cset.dataBytes, modes: cset.modes, kitted: cset.kitted } : {}),
+        ...(cset?.dataOnly ? { dataOnly: true } : {}),
         ...(cset?.rules ? { rules: cset.rules } : {}),
+        ...(Object.keys(roomOptions).length ? { roomOptions: Object.freeze(roomOptions) } : {}),
       },
     };
   }

@@ -124,6 +124,29 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
   useEffect(() => { setOpenPid(null); }, [phaseKey, watching, observe?.observing]);
   const players = sortedPlayers(pub);
   if (!players.length) return null;
+  const isUnite = pub?.phase === PHASE.UNITE;
+  // Vanilla co-op keeps the original roster: every seat shows in the strip, in every phase (including Unite — upstream
+  // never filtered it). The grouped strip is a 5+ seat custom-room feature only (`pub.unite.groups`).
+  const extendedUnite = isUnite && Array.isArray(pub?.unite?.groups);
+  const visiblePlayers = players;
+  const manyPlayers = visiblePlayers.length > 4;
+  const sourceGroups = extendedUnite ? pub.unite.groups : [];
+  const groups = sourceGroups.map((group, i) => ({
+    id: typeof group?.id === 'string' && group.id ? group.id : `g${i + 1}`,
+    index: i + 1,
+    ids: new Set(Array.isArray(group?.helpers) ? group.helpers.filter((id) => typeof id === 'string') : []),
+  })).filter((group) => group.ids.size);
+  const groupOf = new Map();
+  for (const group of groups) for (const id of group.ids) if (!groupOf.has(id)) groupOf.set(id, group);
+  const displayItems = extendedUnite
+    ? [
+        ...groups.map((group) => ({
+          type: 'group', group,
+          players: visiblePlayers.filter((member) => group.ids.has(member.playerId)),
+        })),
+        ...visiblePlayers.filter((player) => !groupOf.has(player.playerId)).map((player) => ({ type: 'player', player })),
+      ]
+    : visiblePlayers.map((player) => ({ type: 'player', player }));
   // a boss round: the viewer's pair framed in green from the round's start (item 51 — the official bg_team_border,
   // tinted like the official green; a plain green ring without the local art)
   const team = teamFrameIds(pub, myId);
@@ -155,8 +178,7 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
     noteAsked(p);
     onWatch(p);
   };
-  return html`<aside class=${cx('team', compact && 'team--compact')} aria-label=${t('同盟成员')}>
-    ${players.map((p) => {
+  const renderPlayer = (p) => {
       const self = p.playerId === myId;
       const status = p.alive === false ? 'dead' : p.status;
       const meta = STATUS_META[status] || STATUS_META.acting;
@@ -200,6 +222,17 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
         </div>
         ${bubble ? html`<${EmoteBubble} key=${bubble.seq} id=${bubble.id} class="team__bubble" />` : null}
       </div>`;
-    })}
+  };
+  return html`<aside class=${cx('team', compact && 'team--compact', manyPlayers && 'team--many')} aria-label=${t('同盟成员')} tabindex=${manyPlayers ? 0 : undefined}>
+    ${displayItems.map((item) => item.type === 'group'
+      ? html`<details key=${`${pub.round}:${item.group.id}`} class="team__unite-group" open data-testid=${`unite-group-${item.group.index}`}>
+          <summary class="team__unite-summary" aria-label=${t('联防队列 {n}', { n: item.group.index })}>
+            <span class="team__unite-mark" aria-hidden="true"><${Icon} name="chevronRight" /></span>
+            <span class="team__unite-label">${t('联防队列 {n}', { n: item.group.index })}</span>
+            <span class="team__unite-count num" aria-hidden="true">${item.players.length}</span>
+          </summary>
+          <div class="team__unite-members">${item.players.map(renderPlayer)}</div>
+        </details>`
+      : renderPlayer(item.player))}
   </aside>`;
 }

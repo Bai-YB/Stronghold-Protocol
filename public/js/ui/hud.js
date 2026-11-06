@@ -87,20 +87,26 @@ export function SpectatorPill({ spectators, myId, isHost, onRemove }) {
  * Phase capsule: prep label, kills n/m (combat/unite), kills + boss HP bar (boss rounds).
  * @param {{ pub:any, hud:any }} props
  */
-export function PhaseCapsule({ pub, hud, miss = null }) {
+export function PhaseCapsule({ pub, hud, miss = null, myId = null }) {
   const phase = pub?.phase;
   if (isBossPhase(phase)) {
     // the battle on screen first: its snapshot carries the live pool (the local simulation's own damage on top of the
     // server's b.pool, or the server's 20 Hz stream); m.public.bossHp refreshes at ~1 Hz and lags the leader's death
     const boss = hud?.boss || pub.bossHp || null;
     const frac = bossFrac(boss);
+    const bossRows = Array.isArray(pub?.bossHp?.bosses) && pub.bossHp.bosses.length > 1 ? pub.bossHp.bosses : null;
     return html`<div class="capsule capsule--boss" role="status">
       <${Sprite} k="hudPanel/icon_boss" class="capsule__icon" fallback=${html`<${GIcon} name="skull" class="capsule__icon" />`} />
       ${hud?.total != null ? html`<span class="capsule__kills num"><b>${hud.resolved ?? hud.killed ?? 0}</b>/${hud.total}</span>` : null}
-      <div class="bossbar" title=${boss ? `${fmtNum(boss.hp)} / ${fmtNum(boss.max)}` : t('敌方领袖')}>
+      ${bossRows ? html`<div class="bossbar-group">${bossRows.map((row, i) => {
+        const ratio = bossFrac(row);
+        return html`<div class="bossbar__row" key=${row.id || i}><small>${t('领袖 {n}', { n: i + 1 })}</small><div class="bossbar bossbar--mini" title=${`${row.id || t('敌方领袖')} · ${fmtNum(row.hp)} / ${fmtNum(row.max)}`}>
+          <div class="bossbar__fill" style=${`width:${ratio == null ? 100 : ratio * 100}%`}></div><span class="bossbar__txt num">${ratio == null ? t('敌方领袖') : bossPctText(ratio)}</span>
+        </div></div>`;
+      })}</div>` : html`<div class="bossbar" title=${boss ? `${fmtNum(boss.hp)} / ${fmtNum(boss.max)}` : t('敌方领袖')}>
         <div class="bossbar__fill" style=${`width:${frac == null ? 100 : frac * 100}%`}></div>
         <span class="bossbar__txt num">${frac == null ? t('敌方领袖') : bossPctText(frac)}</span>
-      </div>
+      </div>`}
     </div>`;
   }
   if (isCombatPhase(phase) || (phase === PHASE.SETTLE && hud?.total != null)) {
@@ -487,8 +493,12 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
   const lp = boss && Number.isFinite(pub?.teamLp) ? pub.teamLp : Number.isFinite(priv?.lp) ? priv.lp : null;
   // normal rounds: the leaks of the own battle so far (boss rounds: the team LP above already moves live)
   const pending = !boss && Number.isFinite(lp) && live && live.pending > 0 ? Math.min(lp, live.pending) : 0;
-  const hidden = phase === PHASE.HIDDEN_CORE || (Number.isFinite(pub?.lastRound) && pub.round > pub.lastRound);
-  const roundText = hidden ? '??' : pub?.round > 0 ? String(pub.round) : '--';
+  const hidden = phase === PHASE.HIDDEN_CORE || (pub?.runKind !== 'endless' && Number.isFinite(pub?.lastRound) && pub.round > pub.lastRound);
+  const roundText = pub?.runKind === 'endless' ? `∞${pub.endless?.round || 0}` : hidden ? '??' : pub?.round > 0 ? String(pub.round) : '--';
+  const protocolNames = { assault: t('强攻'), repair: t('战地修复'), supply: t('急速补给'), arts: t('专注术式'), physical: t('动能压制'), control: t('稳定回路') };
+  const protocolId = myId && pub?.endless?.protocols ? pub.endless.protocols[myId] : null;
+  const protocolLeft = protocolId && Number.isInteger(pub?.endless?.protocolUntil) && Number.isInteger(pub?.endless?.round)
+    ? Math.max(0, pub.endless.protocolUntil - pub.endless.round + 1) : 0;
   // a spectator seat (no m.private, community report #26) never readies
   const showReady = phase === PHASE.PREP && !spectator && priv?.alive !== false;
   // boss rounds: the overtime warning follows the clock (4 Hz while live; frozen while paused)
@@ -536,10 +546,11 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
           <div class="roundbox">
             <span class="roundbox__label">${t('回合')}</span>
             <b class="roundbox__num num" key=${roundText}>${roundText}</b>
+            ${pub?.runKind === 'endless' && pub.endless?.round ? html`<small class="roundbox__endless" title=${t('当前词缀：{affix} · 下次领袖：第 {round} 回合', { affix: pub.endless.affix?.name || '', round: pub.endless.nextBoss })}>${pub.endless.affix?.name || t('无尽')} · B${pub.endless.nextBoss}${protocolLeft > 0 ? ` · ${protocolNames[protocolId] || t('周期协议')} ${protocolLeft}R` : ''}</small>` : null}
           </div>
         </div>
         <div class=${cx('gtop__cap', fx.kind && `is-fx-${fx.kind}`)} key=${`cap${fx.seq}`}>
-          <${PhaseCapsule} pub=${pub} hud=${hud} miss=${!boss && Number.isFinite(live?.left) ? live.left : null} />
+          <${PhaseCapsule} pub=${pub} hud=${hud} myId=${myId} miss=${!boss && Number.isFinite(live?.left) ? live.left : null} />
           ${fx.kind && fx.kind !== 'enter' ? html`<${CapsuleScene} kind=${fx.kind} />` : null}
         </div>
         <div class="gtop__half gtop__half--r">

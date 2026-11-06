@@ -90,11 +90,15 @@ function rewardFor(gd, roundsPassed) {
 export function buildResult(m, outcome) {
   const gd = m.gd;
   const { victory, hiddenReached, hiddenCleared } = outcome;
+  const baseVictory = m.runKind === 'endless' ? (m.endless?.baseRounds || 0) >= gd.bossRound : victory;
+  const baseHiddenCleared = m.runKind === 'endless' ? m.endless?.hiddenCleared === true : hiddenCleared;
   const players = [...m.players.values()].sort((a, b) => a.seat - b.seat);
-  const titles = assignTitles(gd, players.filter(ps => !Number.isInteger(ps.aiTakeoverRound)), victory);
-  const teamRounds = victory ? gd.bossRound + (hiddenCleared ? 1 : 0) : Math.max(0, Math.min(m.round, gd.bossRound) - 1);
+  const titles = assignTitles(gd, players.filter(ps => !Number.isInteger(ps.aiTakeoverRound)), baseVictory);
+  const teamRounds = m.runKind === 'endless' ? (m.endless?.baseRounds || gd.bossRound + (m.endless?.hiddenCleared ? 1 : 0))
+    : victory ? gd.bossRound + (hiddenCleared ? 1 : 0) : Math.max(0, Math.min(m.round, gd.bossRound) - 1);
   const rows = players.map((ps) => {
-    const roundsPassed = !ps.alive && ps.eliminatedRound != null ? Math.max(0, ps.eliminatedRound - 1) : teamRounds;
+    const roundsPassed = m.runKind === 'endless' ? teamRounds
+      : !ps.alive && ps.eliminatedRound != null ? Math.max(0, ps.eliminatedRound - 1) : teamRounds;
     const lineup = boardOrder(ps.board).filter((x) => x.piece.kind === 'chess').map(({ r, c, piece }) => {
       const e = { id: piece.id, golden: gd.isGolden(piece.id), tier: gd.tierOf(piece.id), row: r, col: c, items: (piece.items || []).map((i) => i.id) };
       // 0.2.0 自选编队: a DIY slot's pick — the result screen names and draws the operator (shared/diy.js diyRecord)
@@ -107,7 +111,7 @@ export function buildResult(m, outcome) {
       return e;
     });
     // the team's clear counts for the players still in; an eliminated / departed teammate did not pass the boss round
-    const cleared = victory && ps.alive;
+    const cleared = (victory || (m.runKind === 'endless' && baseVictory)) && (ps.alive || m.runKind === 'endless');
     return {
       playerId: ps.playerId,
       seat: ps.seat,
@@ -131,7 +135,7 @@ export function buildResult(m, outcome) {
         perfectRounds: ps.stats.perfectRounds,
       },
       title: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? null : titles.get(ps.playerId) ?? null,
-      trophies: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? 0 : trophiesFor(gd, roundsPassed, cleared && hiddenCleared),
+      trophies: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? 0 : trophiesFor(gd, roundsPassed, cleared && baseHiddenCleared),
       reward: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? 0 : rewardFor(gd, roundsPassed),
     };
   });
@@ -140,7 +144,8 @@ export function buildResult(m, outcome) {
     victory,
     roundsPassed: teamRounds,
     hiddenReached,
-    hiddenCleared,
+    hiddenCleared: baseHiddenCleared,
+    ...(m.runKind === 'endless' ? { normalVictory: baseVictory } : {}),
     reason: outcome.reason,
     // the merged Final Assault pool (null before round 14); players[].lp are the alive players' shares of it
     teamLp: m.teamLp != null ? Math.max(0, Math.round(m.teamLp)) : null,

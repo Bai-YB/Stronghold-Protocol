@@ -11,7 +11,7 @@ import { t } from '../../../../shared/i18n.js';
 // ---- phases ----------------------------------------------------------------------------------------
 
 const COMBAT_PHASES = new Set([PHASE.COMBAT, PHASE.UNITE, PHASE.FINAL_ASSAULT, PHASE.HIDDEN_CORE]);
-const PREP_PHASES = new Set([PHASE.PREP, PHASE.SP_DRAFT, PHASE.ROUND_START]);
+const PREP_PHASES = new Set([PHASE.PREP, PHASE.SP_DRAFT, PHASE.ROUND_START, PHASE.ENDLESS_TRANSITION, PHASE.ENDLESS_OFFER]);
 
 /**
  * Which screen family a phase belongs to.
@@ -52,10 +52,13 @@ export function phaseBanner(phase, pub, { alive = true, spectator = false } = {}
   const r = int(pub?.round, 0);
   switch (phase) {
     case PHASE.BATTLE_CHECK: return { title: t('协议启动'), micro: 'PROTOCOL START', tone: 'mint', sub: t('模拟即将开始'), duration: 2600 };
+    case PHASE.ENDLESS_TRANSITION: return { title: t('无尽协议已启动'), micro: 'ENDLESS PROTOCOL', tone: 'orange', sub: t('常规模拟通关 · 无限层数已解锁'), duration: 3000 };
     // round income goes to the seats still in only (server/match/match/phases.js startRound; eliminate() zeroes funds
     // and pendingFunds): an eliminated player or a spectator seat reads 观战中, never 资金已到账 (GitHub #236, PR #237)
-    case PHASE.ROUND_START: return { title: t('第 {r} 回合', { r }), micro: `ROUND ${String(r).padStart(2, '0')}`, tone: 'mint',
-      sub: spectator || alive === false ? t('观战中') : t('资金已到账') };
+    case PHASE.ROUND_START: return pub?.runKind === 'endless'
+      ? { title: t('无尽第 {r} 回合', { r: pub.endless?.round || 0 }), micro: `ENDLESS ${String(pub.endless?.round || 0).padStart(2, '0')}`, tone: 'mint',
+        sub: spectator || alive === false ? t('观战中') : t('资金已到账') }
+      : { title: t('第 {r} 回合', { r }), micro: `ROUND ${String(r).padStart(2, '0')}`, tone: 'mint', sub: spectator || alive === false ? t('观战中') : t('资金已到账') };
     case PHASE.SP_DRAFT: return { title: t('机变阶段'), micro: 'CONTINGENCY', tone: 'gold', sub: t('依次选择机变') };
     case PHASE.PREP: return { title: t('休整期'), micro: `ROUND ${String(r).padStart(2, '0')} // REST`, tone: 'mint', sub: t('部署干员，准备迎敌') };
     case PHASE.COMBAT: return { title: t('作战开始'), micro: 'COMBAT', tone: 'orange', sub: t('各自行动阶段') };

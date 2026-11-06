@@ -87,6 +87,22 @@
 .rs-clock__ping .ping { height: auto; min-height: .32rem; padding-top: 1px; padding-bottom: 1px; }
 .rs-tools { display: flex; gap: .08rem; margin-left: .1rem; }
 .rs-top__right { display: flex; align-items: center; gap: .14rem; }
+.rs-seat-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: .04rem;
+  min-height: max(.38rem, 26px);
+  padding: 0 .1rem;
+  color: var(--text-md);
+  background: linear-gradient(180deg, rgba(79, 232, 192, .12), rgba(79, 232, 192, .04));
+  border: 1px solid rgba(79, 232, 192, .4);
+  font-size: max(11px, calc(.14 * var(--t)));
+  font-weight: 700;
+  white-space: nowrap;
+}
+.rs-seat-count > b { color: var(--mint-400); font-size: max(13px, calc(.17 * var(--t))); font-variant-numeric: tabular-nums; }
+.rs-seat-count__scroll { margin-left: .06rem; padding-left: .08rem; color: var(--text-lo); border-left: 1px solid rgba(79, 232, 192, .28); }
 .rs .rs-loadout {
   --pl-ink: #222b28;
   display: flex;
@@ -162,13 +178,18 @@
   min-height: 0;
   display: flex;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
   gap: max(.3rem, 2.2vw);
   padding: .3rem .4rem .1rem;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+  scrollbar-color: rgba(79, 232, 192, .65) rgba(255, 255, 255, .06);
 }
+/* Center the seat strip while it fits. Flex auto margins collapse when the cards overflow, so a new room then starts
+   at its true left edge instead of clipping the first invite/host cards around a centered row. */
+.rs-seats > :first-child { margin-inline-start: auto; }
+.rs-seats > :last-child { margin-inline-end: auto; }
 .rseat {
   --w: min(18vw, 3.4rem, calc((100vw - 1.6rem) / var(--n, 4) - .3rem));
   position: relative;
@@ -817,4 +838,96 @@
   }
   .rs .vervote .vervote__text { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
   .rs .vervote .vervote__actions { flex: none; }
+}
+
+/* More than four seats keep the original portrait card size. The strip scrolls horizontally so the cards never shrink to
+   fit the room width. */
+.rs-seats--many {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  gap: max(.3rem, 2.2vw);
+  padding: .3rem .4rem .1rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overflow-anchor: none;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: none;
+  scroll-behavior: auto;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(79, 232, 192, .65) rgba(255, 255, 255, .06);
+}
+.rs-seats--many > :first-child { margin-inline-start: 0; }
+.rs-seats--many > :last-child { margin-inline-end: 0; }
+.rs-seats--many .rseat { --w: min(3.4rem, 34vw); flex: 0 0 var(--w); width: var(--w); min-width: 0; height: min(100%, 78svh); }
+.rs-seats--many::-webkit-scrollbar { height: 9px; }
+.rs-seats--many::-webkit-scrollbar-track { background: rgba(255, 255, 255, .06); }
+.rs-seats--many::-webkit-scrollbar-thumb { background: rgba(79, 232, 192, .65); border-radius: 999px; }
+@media (max-aspect-ratio: 1/1) {
+  .rs-seats--many .rseat { --w: min(3.4rem, 76vw); }
+}
+@media (max-width: 900px) { .rs-seats--many .rseat { height: min(100%, 70svh); } }
+@media (max-width: 480px) { .rs-seats--many .rseat { height: min(100%, 60svh); } }
+
+.custom-capacity {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: .1rem;
+  padding: .12rem .14rem;
+  border: 1px solid rgba(79, 232, 192, .24);
+  border-left: 3px solid var(--mint-500);
+  background: rgba(78, 216, 175, .07);
+}
+.custom-capacity__label { color: var(--text-md); font-size: max(12px, calc(.15 * var(--t))); font-weight: 700; white-space: nowrap; }
+.custom-capacity__entry { display: flex; align-items: center; gap: .06rem; }
+.custom-capacity__entry input {
+  box-sizing: border-box;
+  width: 56px;
+  height: max(.46rem, 36px);
+  padding: 0 .06rem;
+  color: var(--text-hi);
+  background: rgba(0, 0, 0, .35);
+  border: 1px solid var(--line-2);
+  font: inherit;
+  font-size: max(14px, calc(.17 * var(--t)));
+  text-align: center;
+}
+.custom-capacity__step {
+  display: grid;
+  flex: none;
+  place-items: center;
+  box-sizing: border-box;
+  width: max(.46rem, 36px);
+  height: max(.46rem, 36px);
+  padding: 0;
+  color: var(--mint-400);
+  background: rgba(78, 216, 175, .1);
+  border: 1px solid var(--line-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: max(18px, calc(.2 * var(--t)));
+  font-weight: 700;
+}
+.custom-capacity__step:hover:not(:disabled), .custom-capacity__step:focus-visible { background: rgba(78, 216, 175, .22); border-color: var(--mint-400); }
+.custom-capacity__step:disabled { color: var(--text-lo); opacity: .45; }
+.custom-capacity__entry input:focus-visible { border-color: var(--mint-400); outline: 2px solid rgba(78, 216, 175, .25); }
+.custom-capacity__entry input:disabled { opacity: .65; }
+.custom-capacity__entry > span { color: var(--text-md); font-size: calc(.14 * var(--t)); }
+.custom-capacity__entry .btn { min-height: max(.46rem, 36px); padding: 0 .1rem; white-space: nowrap; }
+.custom-capacity__hint { color: var(--text-lo); font-size: calc(.12 * var(--t)); }
+.rs-opts__capacity { width: 100%; }
+@media (max-width: 900px) {
+  /* The compact footer pill sits left on these widths; keep its settings panel inside the viewport. */
+  .rs-opts { left: 0; transform: none; }
+}
+@media (max-width: 480px) {
+  .rs-seat-count { display: none; }
+  .rs .rs-top { flex-direction: column; align-items: stretch; gap: .08rem; }
+  .rs-top__left, .rs-top__right { flex: 0 0 auto; width: 100%; }
+  .rs-top__left { gap: .08rem; }
+  .rs-top__right { justify-content: space-between; }
 }

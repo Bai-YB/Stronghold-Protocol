@@ -15,6 +15,7 @@ import { getConfig, getMode } from '../data.js';
 import { isShopItem } from '../sim/simdata.js';
 import { mergeData } from '../../shared/plugins/dataUtils.js';
 import { standInRecord } from '../../shared/standIn.js';
+import { MAX_SEATS } from '../../shared/constants.js';
 import { MAX_OFFER_SLOTS } from './player/common.js';
 
 const own = (map, id) => (map && typeof map === 'object' && typeof id === 'string' && Object.hasOwn(map, id) && map[id] && typeof map[id] === 'object' ? map[id] : null);
@@ -63,22 +64,24 @@ export const COMBAT_TIME_SCALE = 2;
  *   solo   `solo` (1: the table value — one player's share);
  *   co-op  `perPlayer` true (the owner's decision of 2026-10-06, adopting PR #209 by @qingjingshenghuo): `coop` (1) × the
  *          players alive when the fight starts — bots and AI 托管 seats count, eliminated and departed seats do not —
- *          at most `aliveFull` (4); a count left out means a full team;
+ *          at most `aliveFull` (4), or the custom room's starting player count; a count left out means a full team;
  *          `perPlayer` false: the fixed pool of 0.1.x (「保持固定血量」, restorable with `solo` 0.25): `coop` whatever the
  *          count, × min(alive, aliveFull) / aliveFull with `aliveScaling`.
  * @param {object|null|undefined} modeScale config.modes[modeId].bossHpScale
  * @param {object|null|undefined} cfgScale config.bossHpScale
  * @param {boolean} isSolo
  * @param {number} [aliveCount] alive players at the Final Assault / Hidden Core start (co-op)
+ * @param {number|null} [aliveFullOverride] explicit team-size cap for a custom room
  * @returns {number}
  */
-export function bossPoolShareOf(modeScale, cfgScale, isSolo, aliveCount) {
+export function bossPoolShareOf(modeScale, cfgScale, isSolo, aliveCount, aliveFullOverride = null) {
   const ms = modeScale && typeof modeScale === 'object' ? modeScale : {};
   const cs = cfgScale && typeof cfgScale === 'object' ? cfgScale : {};
   const pick = (k, d) => (Number.isFinite(ms[k]) && ms[k] > 0 ? ms[k] : Number.isFinite(cs[k]) && cs[k] > 0 ? cs[k] : d);
   const flag = (k, d) => (typeof ms[k] === 'boolean' ? ms[k] : typeof cs[k] === 'boolean' ? cs[k] : d);
   if (isSolo) return pick('solo', 1);
-  const full = Math.max(1, Math.floor(pick('aliveFull', 4)));
+  const full = Math.max(1, Math.floor(Number.isFinite(aliveFullOverride) && aliveFullOverride > 0
+    ? aliveFullOverride : pick('aliveFull', 4)));
   const n = Number(aliveCount);
   const alive = Number.isFinite(n) && n >= 1 ? Math.min(full, Math.floor(n)) : full;
   if (flag('perPlayer', true)) return pick('coop', 1) * alive;
@@ -98,6 +101,8 @@ export class GameData {
     this.config = getConfig(this.raw) || {};
     this.modeId = modeId;
     this.mode = getMode(modeId, this.raw) || {};
+    /** Set by Match only for a custom room; used to extend co-op pool and boss scaling beyond four players. */
+    this.customPlayerCount = 0;
     // Mode-level globals inherit field by field; the vanilla mode never changes its config object.
     const overrides = Object.fromEntries(Object.keys(this.config).filter(k => k !== 'modes' && Object.hasOwn(this.mode, k)).map(k => [k, this.mode[k]]));
     if (Object.keys(overrides).length) this.config = mergeData(this.config, overrides);
@@ -172,7 +177,8 @@ export class GameData {
    * @param {number} [aliveCount]
    */
   bossPoolShare(aliveCount) {
-    return bossPoolShareOf(this.mode.bossHpScale, this.config.bossHpScale, this.isSolo, aliveCount);
+    return bossPoolShareOf(this.mode.bossHpScale, this.config.bossHpScale, this.isSolo, aliveCount,
+      this.customPlayerCount > 0 ? this.customPlayerCount : null);
   }
 
   /** config.titles with the tuning overrides (stat / rule per title id) merged in. */
@@ -313,9 +319,9 @@ export class GameData {
 
   /**
    * Copies of a base chess in the shared pool — and, for a DIY slot, of a slotted 自选 piece in its player's own stock
-   * (player/diy.js buildDiyStock).
+   * (player/diy.js buildDiyStock). `sharedPool` applies the custom-room participant scale to shared stock only.
    */
-  poolCopies(baseId) {
+  poolCopies(baseId, { sharedPool = false } = {}) {
     const ov = this.economy.poolCopiesOverrides;
     const tier = this.tierOf(baseId);
     const pc = this.economy.poolCopies;
@@ -325,7 +331,11 @@ export class GameData {
     // size) and each player's private 自选 stock alike — the maintainer's decision of 2026-10-15 (GitHub #650): with
     // the shared pool doubled and the 自选 stock not, a 自选 operator was diluted in the copy-weighted rolls.
     const multiplier = this.isSolo ? 1 : posIntOr(this.economy.coopPoolMultiplier, 1);
-    return base * multiplier;
+    // The official shared co-op pool is 2× the single-player stock for four seats. Scale only that shared stock in
+    // custom rooms; each private DIY stock already grows with its owning player and keeps the official per-player size.
+    const customScale = sharedPool && !this.isSolo && Number.isInteger(this.customPlayerCount) && this.customPlayerCount > 0
+      ? this.customPlayerCount / MAX_SEATS : 1;
+    return Math.max(0, Math.round(base * multiplier * customScale));
   }
 
   /** Normal equipment copies in the shared pool; effect-only items have no shop stock limit. */

@@ -1,15 +1,45 @@
 // Presentation-only plugin contract (§34.18). Shared by the loader and the browser, outside the sim identity.
 export const PLUGIN_FX_LIMITS = Object.freeze({ files: 256, bytes: 32 * 1024 * 1024, jsonBytes: 1024 * 1024,
-  units: 64, effects: 128, nodes: 64, systems: 16, particles: 1024, emitters: 32, textureSize: 2048, frames: 256 }); // [ASSUMED]
+  units: 64, effects: 128, nodes: 64, systems: 16, particles: 1024, emitters: 32, textureSize: 2048, frames: 256,
+  operators: 512, skins: 1024, enemies: 512, events: 32 }); // [ASSUMED]
 export const FX_PHASES = Object.freeze(['skillStart', 'skillLoop', 'skillEnd', 'attack', 'hit', 'projectile']);
 export const fxObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
 export const fxId = v => typeof v === 'string' && /^[a-z0-9][a-z0-9_-]{0,95}$/.test(v) && !['constructor', 'prototype', '__proto__'].includes(v);
 export const fxPath = v => typeof v === 'string' && /^fx\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(json|png)$/.test(v);
+export const fxOperatorId = v => typeof v === 'string' && /^char_[A-Za-z0-9_]{1,90}$/.test(v);
+export const fxSkinId = v => typeof v === 'string' && v.length <= 160 && /^char_[A-Za-z0-9_]{1,90}@[A-Za-z0-9_.+-]{1,48}#[A-Za-z0-9_-]{1,16}$/.test(v);
+export const fxEnemyId = v => typeof v === 'string' && /^enemy_[A-Za-z0-9_]{1,90}$/.test(v);
 const keys = (v, allowed) => fxObject(v) && Object.keys(v).every(k => allowed.includes(k));
 const num = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
 const integer = (v, min, max) => Number.isInteger(v) && num(v, min, max);
 export const fxNamespace = id => `plugin:${id}:`;
 export const ownsFxUnit = (id, owners) => owners.some(owner => id.startsWith(`char_x_${owner.replace(/-/g, '_')}_`) && fxId(id));
+export const fxBindingId = v => typeof v === 'string' ? v : fxObject(v) ? v.effect : null;
+
+function bindingProblems(value, event = false) {
+  if (typeof value === 'string') return fxId(value) ? [] : ['invalid effect id'];
+  const allowed = event ? ['effect', 'scope', 'duration', 'tint', 'scale', 'alpha'] : ['effect', 'tint', 'scale', 'alpha'];
+  if (!keys(value, allowed) || !fxId(value.effect)) return ['binding needs a valid effect id'];
+  if (value.tint !== undefined && !integer(value.tint, 0, 0xffffff) ||
+      value.scale !== undefined && !num(value.scale, 0.05, 8) ||
+      value.alpha !== undefined && !num(value.alpha, 0, 1)) return ['invalid tint, scale or alpha'];
+  if (event && (value.scope !== undefined && !['unit', 'field'].includes(value.scope) ||
+      value.duration !== undefined && !num(value.duration, 0.05, 30))) return ['invalid event scope or duration'];
+  return [];
+}
+
+function bindingTableProblems(table, limit, keyOk, label) {
+  if (!fxObject(table) || Object.keys(table).length > limit) return [`${label} needs at most ${limit} valid targets`];
+  const out = [];
+  for (const [target, skills] of Object.entries(table)) {
+    if (!keyOk(target) || !fxObject(skills) || Object.keys(skills).length > 10) { out.push(`invalid ${label} target ${target}`); continue; }
+    for (const [skill, phases] of Object.entries(skills)) {
+      if (!(skill === 'default' || fxId(skill)) || !keys(phases, FX_PHASES)) { out.push(`invalid ${label} binding ${target}.${skill}`); continue; }
+      for (const [phase, value] of Object.entries(phases)) out.push(...bindingProblems(value).map(message => `${label} ${target}.${skill}.${phase}: ${message}`));
+    }
+  }
+  return out;
+}
 
 export function operatorFxProblems(fx) {
   if (fx === undefined) return [];
@@ -19,15 +49,17 @@ export function operatorFxProblems(fx) {
 }
 
 export function flipbookProblems(b) {
-  if (!keys(b, ['image', 'frames', 'cols', 'fps', 'anchor', 'scale', 'blend', 'loop']) || !fxPath(b.image) || !b.image.endsWith('.png')) return ['flipbook needs a PNG under fx/; unknown fields are refused'];
+  if (!keys(b, ['image', 'frames', 'cols', 'rows', 'start', 'fps', 'anchor', 'scale', 'blend', 'loop']) || !fxPath(b.image) || !b.image.endsWith('.png')) return ['flipbook needs a PNG under fx/; unknown fields are refused'];
   if (!integer(b.frames, 1, 256) || !integer(b.cols, 1, b.frames) || !num(b.fps, 0.1, 60)) return ['frames 1–256, cols 1–frames and fps 0.1–60 required'];
+  const rows = b.rows === undefined ? Math.ceil(((b.start || 0) + b.frames) / b.cols) : b.rows;
+  if (!integer(rows, 1, 32) || b.start !== undefined && !integer(b.start, 0, 8191) || (b.start || 0) + b.frames > b.cols * rows) return ['flipbook start/rows must fit its atlas'];
   if (b.anchor !== undefined && (!Array.isArray(b.anchor) || b.anchor.length !== 2 || b.anchor.some(v => !num(v, 0, 1)))) return ['anchor must be [x,y] in 0–1'];
   if (b.scale !== undefined && !num(b.scale, 0.01, 8) || b.blend !== undefined && !['normal', 'add'].includes(b.blend) || b.loop !== undefined && typeof b.loop !== 'boolean') return ['invalid scale, blend or loop'];
   return [];
 }
 
 export function pluginFxProblems(fx, owners) {
-  if (!keys(fx, ['index', 'flipbooks', 'bind', 'silentPhases'])) return ['unknown fx field'];
+  if (!keys(fx, ['index', 'flipbooks', 'bind', 'bindOperators', 'bindSkins', 'bindEnemies', 'bindEvents', 'silentPhases'])) return ['unknown fx field'];
   const out = [];
   if (fx.index !== undefined && fx.index !== 'fx/index.json') out.push('compiled index must be fx/index.json');
   if (fx.flipbooks !== undefined) {
@@ -41,7 +73,21 @@ export function pluginFxProblems(fx, owners) {
     if (!fxObject(fx.bind) || Object.keys(fx.bind).length > 64) out.push('at most 64 bound units');
     else for (const [id, skills] of Object.entries(fx.bind)) {
       if (!ownsFxUnit(id, owners) || !fxObject(skills) || Object.keys(skills).length > 10) { out.push(`invalid bound unit ${id}`); continue; }
-      for (const [sk, phases] of Object.entries(skills)) if (!fxId(sk) || !keys(phases, FX_PHASES) || Object.values(phases).some(v => !fxId(v))) out.push(`invalid skill binding ${id}.${sk}`);
+      for (const [sk, phases] of Object.entries(skills)) {
+        if (!fxId(sk) || !keys(phases, FX_PHASES)) { out.push(`invalid skill binding ${id}.${sk}`); continue; }
+        for (const [phase, value] of Object.entries(phases)) out.push(...bindingProblems(value).map(message => `${id}.${sk}.${phase}: ${message}`));
+      }
+    }
+  }
+  if (fx.bindOperators !== undefined) out.push(...bindingTableProblems(fx.bindOperators, PLUGIN_FX_LIMITS.operators, fxOperatorId, 'operator'));
+  if (fx.bindSkins !== undefined) out.push(...bindingTableProblems(fx.bindSkins, PLUGIN_FX_LIMITS.skins, fxSkinId, 'skin'));
+  if (fx.bindEnemies !== undefined) out.push(...bindingTableProblems(fx.bindEnemies, PLUGIN_FX_LIMITS.enemies, fxEnemyId, 'enemy'));
+  if (fx.bindEvents !== undefined) {
+    const events = fx.bindEvents;
+    if (!fxObject(events) || Object.keys(events).length > PLUGIN_FX_LIMITS.events) out.push(`events need at most ${PLUGIN_FX_LIMITS.events} bindings`);
+    else for (const [event, value] of Object.entries(events)) {
+      if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(event)) out.push(`invalid event ${event}`);
+      out.push(...bindingProblems(value, true).map(message => `${event}: ${message}`));
     }
   }
   if (fx.silentPhases !== undefined && (!Array.isArray(fx.silentPhases) || fx.silentPhases.length > 128 || fx.silentPhases.some(v => typeof v !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(v)))) out.push('silentPhases needs at most 128 phase names');
@@ -49,14 +95,14 @@ export function pluginFxProblems(fx, owners) {
 }
 
 /** Exact frame boundaries, top-left atlas order; trailing cells are never displayed. Battle seconds only. */
-export function flipbookFrame(b, seconds) {
+export function flipbookFrame(b, seconds, loop = b.loop) {
   const tick = Math.floor(Math.max(0, seconds) * b.fps + 1e-9);
-  if (!b.loop && tick >= b.frames) return null;
-  const frame = tick % b.frames, rows = Math.ceil(b.frames / b.cols);
-  return { frame, col: frame % b.cols, row: Math.floor(frame / b.cols), rows, u: (frame % b.cols) / b.cols, v: Math.floor(frame / b.cols) / rows };
+  if (!loop && tick >= b.frames) return null;
+  const frame = tick % b.frames, atlasFrame = (b.start || 0) + frame, rows = b.rows || Math.ceil(((b.start || 0) + b.frames) / b.cols);
+  return { frame, col: atlasFrame % b.cols, row: Math.floor(atlasFrame / b.cols), rows, u: (atlasFrame % b.cols) / b.cols, v: Math.floor(atlasFrame / b.cols) / rows };
 }
 
 export function pluginFxSurface() {
-  return ['record.operator.fx', 'overlay.fx.index', 'overlay.fx.flipbooks', 'overlay.fx.bind', 'overlay.fx.silentPhases', 'dsl.fx.plugin'].map(name =>
+  return ['record.operator.fx', 'overlay.fx.index', 'overlay.fx.flipbooks', 'overlay.fx.bind', 'overlay.fx.bindOperators', 'overlay.fx.bindSkins', 'overlay.fx.bindEnemies', 'overlay.fx.bindEvents', 'overlay.fx.silentPhases', 'dsl.fx.plugin'].map(name =>
     ({ name, group: 'effects', stability: 'stable', since: '0.3.1', anchor: 'public/js/render/vfx/pluginFormat.js#pluginFxProblems' }));
 }

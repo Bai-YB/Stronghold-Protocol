@@ -24,6 +24,41 @@ function validPluginFx(id, e) {
   } catch { return false; }
 }
 
+function namespacedBinding(value, namespace) {
+  return typeof value === 'string' ? namespace + value : { ...value, effect: namespace + value.effect };
+}
+
+function namespacedPhases(phases, namespace) {
+  return Object.fromEntries(Object.entries(phases || {}).map(([phase, value]) => [phase, namespacedBinding(value, namespace)]));
+}
+
+function namespacedTable(table, namespace) {
+  return Object.fromEntries(Object.entries(table || {}).map(([target, skills]) => [target,
+    Object.fromEntries(Object.entries(skills).map(([skill, phases]) => [skill, namespacedPhases(phases, namespace)]))]));
+}
+
+function phasesFor(table, key, index, skillId) {
+  const row = table?.[key];
+  if (!fxObject(row)) return {};
+  const out = {};
+  for (const slot of ['default', Number.isInteger(index) ? String(index) : null, skillId].filter((v, i, all) => v && all.indexOf(v) === i)) {
+    if (fxObject(row[slot])) Object.assign(out, row[slot]);
+  }
+  return out;
+}
+
+/** Resolve old direct operator/skin/enemy declarations together with namespaced plugin-unit bindings. */
+export function resolvePluginFxBinding({ info, record, idx, skillId, catalog } = {}) {
+  if (!info || !catalog) return {};
+  const enemy = info.kind === 'enemy' || info.side === 'enemy';
+  if (enemy) return phasesFor(catalog.enemyBindings, info.defId || info.spine, idx, skillId);
+  const charId = info.diy?.charId || record?.charId || info.charId || info.spine || info.defId;
+  const base = phasesFor(catalog.operatorBindings, charId, idx, skillId);
+  const plugin = phasesFor(catalog.bindings, charId, idx, skillId);
+  const skin = info.kind === 'op' && typeof info.skin === 'string' ? phasesFor(catalog.skinBindings, info.skin, idx, skillId) : {};
+  return { ...base, ...plugin, ...skin };
+}
+
 /** Extend a checked visual document's prepared writes without changing the legacy visual protocol. */
 export function preparePluginFx(doc, visual) {
   const writes = (doc?.writes || []).flatMap(w => (w.ops || []).filter(op => op.effects).map(op => ({ id: w.id, op })));
@@ -52,7 +87,7 @@ export function preparePluginFx(doc, visual) {
 export function mergePluginFx(index, effects) {
   const idx = { ...(index || { format: 'fx-index', version: 3 }), units: { ...index?.units }, skills: { ...index?.skills },
     prefabs: { ...index?.prefabs }, skins: { ...index?.skins }, projectiles: { ...index?.projectiles }, pluginUnits: {} };
-  const descriptors = new Map(), textures = {}, books = new Map(), bindings = {}, silent = new Set();
+  const descriptors = new Map(), textures = {}, books = new Map(), bindings = {}, operatorBindings = {}, skinBindings = {}, enemyBindings = {}, eventBindings = {}, silent = new Set();
   for (const [id, e] of Object.entries(effects || {})) {
     if (!validPluginFx(id, e)) continue;
     const ns = fxNamespace(id), ix = e.index;
@@ -70,9 +105,13 @@ export function mergePluginFx(index, effects) {
     for (const [key, t] of Object.entries(e.textures || {})) if (e.images[t.path]) textures[ns + key] = { path: e.images[t.path].url };
     for (const [key, b] of Object.entries(e.config.flipbooks || {})) if (e.images[b.image]) books.set(ns + key, { ...b, ...e.images[b.image] });
     for (const [unit, skills] of Object.entries(e.config.bind || {})) {
-      bindings[unit] = Object.fromEntries(Object.entries(skills).map(([s, phases]) => [s, Object.fromEntries(Object.entries(phases).map(([phase, key]) => [phase, ns + key]))]));
+      bindings[unit] = Object.fromEntries(Object.entries(skills).map(([s, phases]) => [s, namespacedPhases(phases, ns)]));
     }
+    Object.assign(operatorBindings, namespacedTable(e.config.bindOperators, ns));
+    Object.assign(skinBindings, namespacedTable(e.config.bindSkins, ns));
+    Object.assign(enemyBindings, namespacedTable(e.config.bindEnemies, ns));
+    for (const [event, binding] of Object.entries(e.config.bindEvents || {})) eventBindings[event] = namespacedBinding(binding, ns);
     for (const phase of e.config.silentPhases || []) silent.add(phase);
   }
-  return { index: idx, descriptors, textures, books, bindings, silent };
+  return { index: idx, descriptors, textures, books, bindings, operatorBindings, skinBindings, enemyBindings, eventBindings, silent };
 }

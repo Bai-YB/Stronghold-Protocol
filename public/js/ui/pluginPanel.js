@@ -109,7 +109,7 @@ function ModePicker({ room, f, busy, onPick }) {
 }
 
 /** The room's 插件 panel (see the header). */
-export function PluginPanel({ open, room, myId, onClose }) {
+export function PluginPanel({ open, room, myId, onClose, focusPluginId = null }) {
   const cat = useStore((s) => s, Object.is, catalog);
   const personalIds = useStore(s => s.ids, Object.is, personal);
   const installed = useStore(installedCount);
@@ -129,6 +129,7 @@ export function PluginPanel({ open, room, myId, onClose }) {
   // a plugin the room has that the catalogue no longer offers (removed, skipped, another scope now) still shows, by its
   // id: its switch only turns it off
   const rows = [...offered, ...f.plugins.filter((p) => !offered.some((o) => o.id === p.id)).map((p) => ({ id: p.id, version: p.version, missing: true }))];
+  if (focusPluginId) rows.sort((a, b) => Number(b.id === focusPluginId) - Number(a.id === focusPluginId));
   const nameOf = (id) => { const p = cat.plugins.find((x) => x.id === id); return p ? pluginName(p) : String(id ?? ''); };
   const classOf = (id) => cat.plugins.find((x) => x.id === id)?.class || f.plugins.find((x) => x.id === id)?.class || 'cosmetic';
   const anyContent = f.modded || offered.some((p) => ['content','script','trusted'].includes(p.class));
@@ -159,13 +160,15 @@ export function PluginPanel({ open, room, myId, onClose }) {
   };
   // the same choice again (without a plugin the server no longer offers): the set of the files as they are now
   const reapply = () => send(f.chosen.filter((x) => !offeredIds || offeredIds.has(x)), 'reapply');
-  return html`<${Modal} open=${open} onClose=${onClose} title=${t('插件')} micro="PLUGINS" width="7.4rem"
+  const customSettingsFocus = focusPluginId === 'custom-room';
+  return html`<${Modal} open=${open} onClose=${onClose} title=${t(customSettingsFocus ? '自定义房间设置' : '插件')} micro=${customSettingsFocus ? 'ROOM RULES' : 'PLUGINS'} width="7.4rem"
       actions=${html`<${Button} variant="primary" icon="check" onClick=${onClose}>${t('完成')}<//>`}>
     <div class="plugpanel" data-testid="plugin-panel">
       <p class="plugpanel__lead">
         <span class=${cx('plugtag plugtag--static', f.count && 'is-modded', f.modded && 'is-unofficial')}>${f.count ? t('插件 ×{n}', { n: f.count }) : t('原版')}</span>
         ${t('房间的外观插件只改变画面和声音，不影响战斗；插件为非官方制作。')}
       </p>
+      ${customSettingsFocus ? html`<p class="plugpanel__focus-hint">${t('调整本局席位数量和选择计时。')}</p>` : null}
       ${anyContent ? html`<p class="set-hint">${t('改变玩法的插件会改变本房间的数据与规则；这样的对局为非官方对局，不计入统计总览。')}</p>` : null}
       ${ruleLine(f.rules) ? html`<p class="set-hint" data-testid="plugin-rules">${ruleLine(f.rules)}</p>` : null}
       ${versionRoom && anyContent ? html`<p class="set-hint is-warn" data-testid="plugin-version-note">${t('改变玩法的插件只能在第二期下半使用')}</p>` : null}
@@ -180,12 +183,14 @@ export function PluginPanel({ open, room, myId, onClose }) {
         ${rows.map((p) => {
           const on = f.on.has(p.id);
           const auto = f.auto.has(p.id);
+          const required = f.custom && p.id === 'custom-room';
           const content = ['content','script','trusted'].includes(p.class || classOf(p.id));
           // a gameplay plugin made for other game versions is refused (PLUGIN_INCOMPATIBLE): its switch only turns it off
           const blocked = content && ((p.compatible === false) || versionRoom) && !on;
-          return html`<li key=${p.id} class=${cx('plugrow', on && 'is-on', content && 'is-content')} data-plugin=${p.id}>
+          return html`<li key=${p.id} class=${cx('plugrow', on && 'is-on', content && 'is-content', p.id === focusPluginId && 'plugrow--focus')} data-plugin=${p.id}
+              data-testid=${p.id === focusPluginId ? 'custom-room-settings-row' : undefined}>
             <button type="button" role="switch" aria-checked=${on ? 'true' : 'false'} class=${cx('set-toggle plugrow__switch', on && 'is-on')}
-              disabled=${!f.editable || !!busy || (p.missing && !on) || (auto && on && !p.missing) || blocked} aria-label=${pluginName(p)}
+              disabled=${!f.editable || !!busy || (p.missing && !on) || (auto && on && !p.missing) || (required && on) || blocked} aria-label=${pluginName(p)}
               onClick=${() => toggle(p.id, !on)}><i></i><span>${on ? tc('toggle', '开启') : tc('toggle', '关闭')}</span></button>
             <div class="plugrow__body">
               <div class="plugrow__name"><b>${pluginName(p)}</b>${p.version ? html`<span class="num t-dim">v${p.version}</span>` : null}

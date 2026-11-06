@@ -33,6 +33,7 @@ export function roomPluginFacts(room, myId) {
   const list = Array.isArray(room?.content?.plugins) ? room.content.plugins.filter((p) => p && typeof p.id === 'string') : [];
   const c = room?.content;
   return {
+    custom: room?.custom === true,
     count: list.length,
     plugins: list,
     on: new Set(list.map((p) => p.id)),
@@ -89,19 +90,23 @@ export const pluginTagText = (room) => {
 export const pluginMicro = (p) => [p?.id, p?.version ? `v${p.version}` : null, Number.isFinite(p?.artBytes) ? sizeText(p.artBytes) : null].filter(Boolean).join(' · ');
 
 /** The tag at the top of the room: 「原版」 or 「插件 ×N」; a tap loads the panel and opens it. */
-export function PluginTag({ room, myId }) {
+export function PluginTag({ room, myId, readOnly = false }) {
   // the panel's component once loaded (a function in state: set through an updater)
   const [Panel, setPanel] = useState(null);
+  const [focusPluginId, setFocusPluginId] = useState(null);
   const f = roomPluginFacts(room, myId);
   const rulesText = ruleLine(f.rules);
-  const open = () => {
+  const open = (focus = null) => {
+    setFocusPluginId(focus);
     import('./pluginPanel.js').then((m) => setPanel(() => m.PluginPanel), (err) => console.warn('[plugins] the panel did not load', err));
   };
-  return html`<button type="button" class=${cx('plugtag', f.count && 'is-modded', f.modded && 'is-unofficial', rulesText && 'plugtag--rules')} data-testid="plugin-tag" onClick=${open}
-      title=${f.modded ? t('本房间使用了改变玩法的插件（非官方）') : t('插件')} aria-label=${pluginTagText(room)}>
+  return html`<button type="button" class=${cx('plugtag', f.count && 'is-modded', f.modded && 'is-unofficial', rulesText && 'plugtag--rules')} data-testid="plugin-tag" disabled=${readOnly} onClick=${readOnly ? undefined : open}
+      title=${readOnly ? t('匹配条件已锁定') : f.modded ? t('本房间使用了改变玩法的插件（非官方）') : t('插件')} aria-label=${pluginTagText(room)}>
     <${Icon} name=${f.count ? 'edit' : 'check'} />${f.count ? t('插件 ×{n}', { n: f.count }) : t('原版')}${f.modded ? html`<b class="plugtag__mod">${t('非官方')}</b>` : null}${rulesText ? html`<span class="plugtag__rules" data-testid="plugin-rules">${rulesText}</span>` : null}
   </button>
-  ${Panel ? html`<${Panel} open=${true} room=${room} myId=${myId} onClose=${() => setPanel(null)} />` : null}`;
+  ${room?.custom ? html`<button type="button" class="plugtag plugtag--settings" data-testid="custom-room-settings" disabled=${readOnly} onClick=${readOnly ? undefined : () => open('custom-room')}
+      title=${t('自定义房间设置')} aria-label=${t('自定义房间设置')}><${Icon} name="edit" />${t('自定义房间设置')}</button>` : null}
+  ${Panel ? html`<${Panel} open=${true} room=${room} myId=${myId} focusPluginId=${focusPluginId} onClose=${() => setPanel(null)} />` : null}`;
 }
 
 /**

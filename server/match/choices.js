@@ -417,12 +417,14 @@ export function cardView(c) {
 
 /**
  * Apply a picked card to a player (registry override → family default). Team tactic cards are applied to every
- * alive teammate as well.
+ * alive teammate, or only the current custom-room selection group when supplied.
  * @param {import('./Match.js').Match} m
  * @param {import('./PlayerState.js').PlayerState} ps
+ * @param {import('./PlayerState.js').PlayerState[]} [teamPlayers]
  */
-export function applyCard(m, ps, card) {
-  const targets = card.kind === 'tactic' && card.team ? [ps, ...m.alivePlayers().filter((p) => p !== ps)] : [ps];
+export function applyCard(m, ps, card, teamPlayers = null) {
+  const teammates = Array.isArray(teamPlayers) ? teamPlayers : m.alivePlayers();
+  const targets = card.kind === 'tactic' && card.team ? [ps, ...teammates.filter((p) => p !== ps && p.alive)] : [ps];
   for (const p of targets) {
     const ev = { card: { ...card }, family: card.family, picker: ps.playerId, forTeammate: p !== ps };
     const handled = m.dispatcher.runKey(p, `choice:${card.id}`, 'onChoicePick', { kind: 'choice', card }, ev);
@@ -441,7 +443,7 @@ function applyDefault(m, ps, card) {
     return;
   }
   if (card.kind === 'item') {
-    ps.acquireItem(card.id, { source: 'choice' });
+    ps.acquireItem(card.id, { source: 'choice', displayed: m.customRoom === true });
     return;
   }
   if (card.kind !== 'tactic') return;

@@ -19,6 +19,8 @@ export const DEV_BUILD = /-dev$/.test(APP_VERSION);
 export const PLUGIN_API = Object.freeze({ current: 2, min: 1 });
 
 export const MAX_SEATS = 4;
+/** Maximum seats enabled by the custom-room plugin. Vanilla co-op remains four seats. */
+export const MAX_ROOM_SEATS = 20;
 /**
  * Spectator seats of a co-op room (community report #26, owner's decision 2026-10-04) — a remake feature: the official
  * room has 1–4 players and no spectator seat (there only eliminated players and 联防 bystanders watch, research 09 §3.1).
@@ -55,6 +57,8 @@ export const PHASE = Object.freeze({
   SETTLE: 'SETTLE',
   FINAL_ASSAULT: 'FINAL_ASSAULT',
   HIDDEN_CORE: 'HIDDEN_CORE',
+  ENDLESS_TRANSITION: 'ENDLESS_TRANSITION',
+  ENDLESS_OFFER: 'ENDLESS_OFFER',
   RESULT: 'RESULT',
 });
 
@@ -62,6 +66,7 @@ export const PHASE_NAMES = {
   LOBBY: N_('等待中'), INFO_CHECK: N_('确认本局信息'), BAND_DRAFT: N_('选择策略'), BATTLE_CHECK: N_('协议启动'),
   ROUND_START: N_('回合开始'), SP_DRAFT: N_('机变阶段'), PREP: N_('休整期'), COMBAT: N_('作战中'), UNITE: N_('联防阶段'),
   SETTLE: N_('结算'), FINAL_ASSAULT: N_('最终攻势'), HIDDEN_CORE: N_('隐秘核心'), RESULT: N_('模拟结束'),
+  ENDLESS_TRANSITION: N_('无尽协议已启动'), ENDLESS_OFFER: N_('周期协议选择'),
 };
 
 // Board geometry on the 19x21 stage grid (row 0 = bottom). See DESIGN §3.
@@ -111,11 +116,11 @@ export const BOND_LAYER_CAP = 999;
  * negative (a count already at or over the cap gains 0 and is never lowered); 0 for a non-positive / non-finite `n`
  * except +Infinity (= "the room left").
  */
-export function layerGainRoom(before, n) {
+export function layerGainRoom(before, n, cap = BOND_LAYER_CAP) {
   if (!(n > 0)) return 0;
-  const cap = BOND_LAYER_CAP > 0 ? BOND_LAYER_CAP : Infinity;
+  const limit = cap == null || cap <= 0 ? Infinity : Number.isFinite(cap) ? cap : Infinity;
   const b = Number.isFinite(before) && before > 0 ? before : 0;
-  return Math.max(0, Math.min(n, cap - b));
+  return Math.max(0, Math.min(n, limit - b));
 }
 
 /**
@@ -148,6 +153,7 @@ export const ERR = Object.freeze({
   ROOM_FULL: 'ROOM_FULL',
   SERVER_FULL: 'SERVER_FULL',     // the online cap (SP_MAX_ONLINE) has no seat for a new player
   ROOM_STARTED: 'ROOM_STARTED',
+  MATCHMAKING: 'MATCHMAKING',
   // a fixed alliance key (--room-code): one room at a time can hold it
   ROOM_CODE_TAKEN: 'ROOM_CODE_TAKEN',
   NOT_HOST: 'NOT_HOST',
@@ -206,6 +212,7 @@ export const ERR_TEXT = {
   SESSION_IN_USE: N_('此对局仍在其他窗口中，或当前浏览器无法安全恢复。请关闭原窗口后重试。'),
   BAD_MSG: N_('无效的请求'), RATE: N_('操作过于频繁'), NOT_IN_ROOM: N_('你不在房间中'), ROOM_NOT_FOUND: N_('未找到该同盟密钥对应的房间'),
   ROOM_FULL: N_('房间已满'), SERVER_FULL: N_('服务器已满'), ROOM_STARTED: N_('模拟已开始'), NOT_HOST: N_('只有房主可以操作'), NOT_READY: N_('仍有玩家未就绪'),
+  MATCHMAKING: N_('匹配房间由系统管理，无法手动调整'),
   ROOM_CODE_TAKEN: N_('固定同盟密钥已被另一个房间占用，请先关闭那个房间'),
   WRONG_PHASE: N_('当前阶段无法进行该操作'), NO_FUNDS: N_('资金不足'), HAND_FULL: N_('整备区已满'), BOARD_FULL: N_('已达到部署上限'),
   BAD_TILE: N_('无法部署在该位置'), BAD_TARGET: N_('无效的目标'), SOLD_OUT: N_('已售出'), MAX_LEVEL: N_('调度中心已达最高等级'),

@@ -1,44 +1,127 @@
-// 公告 (DESIGN §34.14). A button on the title screen and the lobby, only when the server's catalogue has at least
-// one notice. Opening the popup marks every notice on screen as seen (sp.pref.notices-seen). The body is text,
-// never HTML. With no notices the button is not rendered.
-
-import { useEffect, useState } from '../../vendor/hooks.module.js';
-import { html, Modal, Button } from './components.js';
-import { useStore } from '../store.js';
-import { catalog, loadCatalog, installedCount, pluginName } from '../content.js';
-import { useLang } from './lang.js';
+// The selection-page bell shows the latest host announcement.
+import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
+import { html } from './components.js';
 import { t } from '../../../shared/i18n.js';
-import { noticeView, readSeen, markSeen } from '../../../shared/plugins/notices.js';
+import { announcementsForCurrentVisitor } from '../announcementDismissal.js';
 
-/** Title and lobby entry. Renders nothing when this server has no notice. */
+const REFRESH_MS = 30_000;
+const HOST_SEEN_KEY = 'sp.announcements.read.v1';
+const ID_PATTERN = /^[a-f0-9]{24}$/;
+
+function readHostSeen() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HOST_SEEN_KEY) || '[]');
+    return new Set(Array.isArray(raw) ? raw.filter((id) => typeof id === 'string' && ID_PATTERN.test(id)).slice(-200) : []);
+  } catch { return new Set(); }
+}
+
+function markHostSeen(ids) {
+  const seen = readHostSeen();
+  for (const id of ids) if (typeof id === 'string' && ID_PATTERN.test(id)) seen.add(id);
+  try { localStorage.setItem(HOST_SEEN_KEY, JSON.stringify([...seen].slice(-200))); } catch { /* keep the in-page state */ }
+  return seen;
+}
+
+function formatPublishedAt(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return '';
+  try { return new Intl.DateTimeFormat(document.documentElement.lang || 'zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(date); }
+  catch { return ''; }
+}
+
+function NoticeCard({ entry, t: translate }) {
+  const urgent = entry.priority === 'urgent';
+  const meta = formatPublishedAt(entry.publishedAt);
+  return html`<article key=${entry.id} class=${`notice-card${urgent ? ' notice-card--urgent' : ''}`}>
+    <p class="notice-card__meta">
+      ${urgent ? html`<span class="notice-card__badge">${translate('紧急通知')}</span>` : null}
+      ${entry.audience === 'new' ? html`<span class="notice-card__badge">${translate('新手提醒')}</span>` : null}
+      ${meta}
+    </p>
+    <h3 class="notice-card__title">${entry.title}</h3>
+    <p class="notice-card__body">${entry.body}</p>
+  </article>`;
+}
+
+/** Selection-page bell. The red dot clears when the user opens the rail. */
 export function NoticesButton() {
-  const installed = useStore((s) => installedCount(s) > 0 || s.installedNotices === true);
-  const cat = useStore((s) => s, Object.is, catalog);
-  const lang = useLang();
+  const rootRef = useRef(null);
   const [open, setOpen] = useState(false);
-  const [seen, setSeen] = useState(() => readSeen());
-  useEffect(() => { if (installed) loadCatalog(); }, [installed]);
-  if (!installed) return null;
-  const view = noticeView(cat.plugins, lang, seen, pluginName);
-  if (!view.notices.length) return null;
-  const openPopup = () => {
-    setSeen(markSeen(view.notices.map((n) => n.key)));
+  const [hostSeen, setHostSeen] = useState(() => readHostSeen());
+  const [hostEntries, setHostEntries] = useState([]);
+  const [hostLoaded, setHostLoaded] = useState(false);
+
+  useEffect(() => {
+    let stopped = false;
+    let timer = null;
+    async function refresh() {
+      try {
+        const response = await fetch('/announcements/api', { cache: 'no-store', credentials: 'same-origin' });
+        if (!response.ok) throw new Error('ANNOUNCEMENTS_UNAVAILABLE');
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.announcements) ? payload.announcements.filter((entry) =>
+          entry && typeof entry.id === 'string' && ID_PATTERN.test(entry.id)
+            && typeof entry.title === 'string' && typeof entry.body === 'string') : [];
+        const visible = announcementsForCurrentVisitor(rows)
+          .sort((a, b) => (Number(b.publishedAt) || 0) - (Number(a.publishedAt) || 0));
+        if (!stopped) { setHostEntries(visible); setHostLoaded(true); }
+      } catch { if (!stopped) setHostLoaded(true); }
+      if (!stopped) timer = setTimeout(refresh, REFRESH_MS);
+    }
+    const onStorage = (event) => {
+      if (!event.key || event.key === HOST_SEEN_KEY) setHostSeen(readHostSeen());
+    };
+    window.addEventListener('storage', onStorage);
+    refresh();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event) => { if (event.key === 'Escape') setOpen(false); };
+    const onPointerDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [open]);
+
+  const latestEntry = hostEntries[0] || null;
+  const unread = Boolean(latestEntry && !hostSeen.has(latestEntry.id));
+
+  function toggle() {
+    if (open) { setOpen(false); return; }
+    if (latestEntry) setHostSeen(markHostSeen([latestEntry.id]));
     setOpen(true);
-  };
-  return html`<span class="notice-slot">
-    <button type="button" class="notice-entry tapx" data-testid="notices-open" aria-label=${t('公告')} onClick=${openPopup}>
-      ${t('公告')}
-      ${view.unread ? html`<span class="notice-entry__dot" aria-label=${t('有未读公告')}></span>` : null}
+  }
+
+  return html`<span class="notice-slot" ref=${rootRef}>
+    <button type="button" class="notice-entry tapx" data-testid="notices-open" aria-label=${t('公告')}
+      title=${t('公告')} aria-expanded=${String(open)} aria-controls="notice-popover" onClick=${toggle}>
+      <svg class="notice-entry__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      ${unread ? html`<span class="notice-entry__dot" aria-label=${t('有未读公告')}></span>` : null}
     </button>
-    <${Modal} open=${open} title=${t('公告')} micro="NOTICES" onClose=${() => setOpen(false)}
-      actions=${html`<${Button} variant="primary" onClick=${() => setOpen(false)}>${t('关闭')}<//>`}>
-      <div class="notice-list">
-        ${view.notices.map((n) => html`<article key=${n.key} class="notice-card" data-notice=${n.key}>
-          <p class="notice-card__meta">${n.pluginName}${n.date ? ` · ${n.date}` : ''}</p>
-          <h3 class="notice-card__title">${n.title}</h3>
-          <p class="notice-card__body">${n.body}</p>
-        </article>`)}
+    ${open ? html`<aside id="notice-popover" class="notice-popover" role="dialog" aria-label=${t('公告')}>
+      <header class="notice-popover__heading">
+        <strong>${t('公告')}</strong>
+        <button type="button" class="notice-popover__close" aria-label=${t('关闭')} onClick=${() => setOpen(false)}>×</button>
+      </header>
+      <div class="notice-popover__body">
+        ${latestEntry ? html`<section>
+          <h2 class="notice-popover__section-title">${t('服主公告')}</h2>
+          <div class="notice-list"><${NoticeCard} entry=${latestEntry} t=${t} /></div>
+        </section>` : hostLoaded ? null : html`<p class="notice-popover__empty">${t('正在读取状态…')}</p>`}
+        ${hostLoaded && !latestEntry ? html`<p class="notice-popover__empty">${t('当前没有公告。')}</p>` : null}
       </div>
-    <//>
+      <footer class="notice-popover__footer"><a href="/status/">${t('查看服务器状态')}</a></footer>
+    </aside>` : null}
   </span>`;
 }

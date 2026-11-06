@@ -33,7 +33,7 @@ See [PLUGINS.md](PLUGINS.md#import-and-display-polish-031-3427) for hint visibil
 
 Optional local extraction for official plugin operators outside the roster (§34.28) fills the installation's existing
 `chars` asset slots before cosmetic composition. It adds no author-facing field or stable surface name; existing
-`overlay.chars.*` files/references and their precedence are unchanged. See [ASSETS.md](ASSETS.md#official-operator-art-referenced-by-plugins-031).
+`overlay.chars.*` files/references and their precedence are unchanged. See [ASSETS.md](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/docs/ASSETS.md#official-operator-art-referenced-by-plugins-031).
 
 Theme values and announcements are specified in [PLUGINS §9.1–§9.2](PLUGINS.md#91-theme-variables). `shared/plugins/theme.js` exports the single `THEME_TOKENS` allowlist used by validation and application. Announcements use `notices: [{ id, title, body, date?, i18n? }]` on any class; they are catalogue data and excluded from gameplay descriptors. Adding/editing/removing notices and changing personal theme values preserve `cs`, `vs` and room-facing plugin hashes: manifests always use the same canonical representation without `notices`/`theme`, while raw lock verification remains intact. Theme values have a 400-character raw limit (before trimming/parsing); notice catalogues skip entries that do not fit the 100-entry/48 KiB caps. Server and client both enforce these bounds. Notice-only personal cosmetics remain available as dependencies. [ASSUMED] Cosmetic lock identity includes checked Spine metadata, with actual shaping files hashed separately. Canonicalization migrates pre-fix raw-manifest identities even for plugins without the new fields.
 Offers (0.3.1, API 2) are declarative JSON. The stable manifest/permission/error rows below are dated 0.3.1;
@@ -102,6 +102,7 @@ replacement. No route or frozen plugin grammar member is added; the stable surfa
 | `manifest.field.permissions` | stable | 0.3.0 | `shared/plugins/manifest.js#MANIFEST_FIELDS` |
 | `manifest.field.priority` | stable | 0.3.0 | `shared/plugins/manifest.js#MANIFEST_FIELDS` |
 | `manifest.field.requires` | stable | 0.3.0 | `shared/plugins/manifest.js#MANIFEST_FIELDS` |
+| `manifest.field.room` | stable | 0.3.0 | `shared/plugins/manifest.js#MANIFEST_FIELDS` |
 | `manifest.field.rules` | stable | 0.3.1 | `shared/plugins/manifest.js#MANIFEST_FIELDS` |
 | `manifest.field.scope` | stable | 0.3.0 | `shared/plugins/manifest.js#MANIFEST_FIELDS` |
 | `manifest.field.settings` | stable | 0.3.0 | `shared/plugins/manifest.js#MANIFEST_FIELDS` |
@@ -577,6 +578,10 @@ replacement. No route or frozen plugin grammar member is added; the stable surfa
 | `overlay.fx.index` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
 | `overlay.fx.flipbooks` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
 | `overlay.fx.bind` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
+| `overlay.fx.bindOperators` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
+| `overlay.fx.bindSkins` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
+| `overlay.fx.bindEnemies` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
+| `overlay.fx.bindEvents` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
 | `overlay.fx.silentPhases` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
 | `dsl.fx.plugin` | stable | 0.3.1 | `public/js/render/vfx/pluginFormat.js#pluginFxProblems` |
 | `record.operator.trait.dsl` | stable | 0.3.1 | `server/plugins/operatorTraits.js#TRAIT_SURFACE` |

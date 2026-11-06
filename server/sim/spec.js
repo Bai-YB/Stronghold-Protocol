@@ -40,6 +40,7 @@
 import { Battle } from './Battle.js';
 import { toDataSource, withUnitLoadouts } from './simdata.js';
 import { isPotential, isCultivate } from '../../shared/potential.js';
+import { MAX_ROOM_SEATS } from '../../shared/constants.js';
 import { isContentHash } from '../../shared/plugins/identity.js';
 import { BOSS_POOL_MIN_HP } from './constants.js';
 import { DEFAULT_VERSION, versionById, versionOfData } from '../../shared/versions.js';
@@ -325,7 +326,7 @@ export function battleProgress(battle) {
   }
   if (battle && (battle.kind === 'boss' || battle.kind === 'hidden')) {
     const leaksBy = {};
-    for (const pid of Object.keys(pp).slice(0, 4)) leaksBy[pid] = Math.min(1e6, leakEntries(pp[pid]).reduce((n, l) => n + leakLpr(l), 0));
+    for (const pid of Object.keys(pp).slice(0, MAX_ROOM_SEATS)) leaksBy[pid] = Math.min(1e6, leakEntries(pp[pid]).reduce((n, l) => n + leakLpr(l), 0));
     out.leaksBy = leaksBy;
   }
   return out;
@@ -408,7 +409,7 @@ function compactMods(m) {
 export function compactResult(res) {
   const r = res && typeof res === 'object' ? res : {};
   const perPlayer = {};
-  for (const pid of Object.keys(r.perPlayer || {}).slice(0, 4)) {
+  for (const pid of Object.keys(r.perPlayer || {}).slice(0, MAX_ROOM_SEATS)) {
     const p = r.perPlayer[pid] || {};
     const layerGains = {};
     for (const [k, v] of Object.entries(p.layerGains || {}).slice(0, 40)) if (isKey(k) && fnum(v) > 0) layerGains[k] = Math.min(1e4, fnum(v));
